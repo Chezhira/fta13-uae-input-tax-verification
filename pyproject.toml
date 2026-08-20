@@ -1,0 +1,15 @@
+[project]
+name = "fta13"
+version = "0.1.0"
+description = "Deterministic verification engine for UAE FTA Decision No. 13 of 2026 (input tax due diligence)"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+ai = ["anthropic>=0.40"]
+app = ["streamlit>=1.40,<2"]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
