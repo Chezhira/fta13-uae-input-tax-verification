@@ -1,78 +1,140 @@
-# fta13
+<div align="center">
 
-Verification workflow engine for **FTA Decision No. 13 of 2026** (UAE), effective 1 October 2026.
+# FTA13 Verification Engine
 
-> **Important:** This project assesses completion of the verification measures in
-> Decision No. 13 only. It does not determine overall input-tax recoverability
-> under UAE VAT law. It uses the unofficial English translation and is not tax advice.
+### A reproducible UAE VAT supplier and supply verification workflow
 
-```bash
-python -m pytest tests/ -q     # 28 tests
-python demo.py                 # worked example
-streamlit run app.py           # public scenario tester
-```
+Turn FTA Decision No. 13 of 2026 into an explainable checklist, threshold assessment and audit-ready verification record.
 
-## The architecture question
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-1f6feb)](https://www.python.org/)
+[![Tests](https://img.shields.io/badge/tests-28%20passing-2ea043)](tests/test_engine.py)
+[![Coverage](https://img.shields.io/badge/deterministic%20coverage-92%25-2ea043)](.github/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-f2cc60)](LICENSE)
 
-The temptation with a rule like this is to hand the whole thing to a model and ask "can we claim this input tax?" That fails for a specific reason. Article 5(3) requires the taxpayer to enable the Authority to verify the correctness of implementation. A model output is not reproducible, cannot be recomputed by an officer two years later, and has no accountable signatory. It cannot be the thing a deduction rests on.
+[Try locally](#quick-start) · [See the worked example](#worked-example) · [Read the developer guide](docs/DEVELOPER.md) · [Official Arabic decision](https://tax.gov.ae/ar/Legislation.aspx)
 
-So the codebase draws a hard line, and enforces it in code rather than in convention.
-
-### Layer 1 — deterministic (`thresholds.py`, `engine.py`)
-
-Pure functions over structured data. Same inputs, same output, always. This layer owns:
-
-| What | Clause |
-|---|---|
-| AED 10,000 per-supply de minimis | 6(1) |
-| AED 100,000 supplier ceiling that withdraws the de minimis | 6(2) |
-| AED 375,000 enhanced checks trigger | 3(4) |
-| Rolling 12-month windows, trailing and forward | throughout |
-| Risk event counting (address, key employee) | 3(3)(a)(1)–(2) |
-| Re-verification due dates | 5(1) |
-| Whether required evidence exists and is valid at the date | 3(1), 3(2)(a), 3(4)(a), 4(2)(b), 4(3)(c) |
-| Which clauses apply to this supplier and this supply | 3, 4 |
-| Whether applicable Decision 13 verification is complete | net position |
-
-The Decision 13 completion status is arithmetic over the clause results. No model is in that path.
-
-### Layer 2 — advisory AI (`ai.py`)
-
-Reserved for the clauses that genuinely need reading and reasoning: whether premises fit the activity, whether a supply falls inside a licence, whether a margin is off market, whether an intermediary's role makes commercial sense, adverse media screening.
-
-`draft()` returns an `AIDraft`. A draft carries a provisional view, a confidence, a list of missing information, and a list of contradictions in the facts supplied. It changes nothing. It becomes part of the record only through:
-
-```python
-conclusion = draft.accept(
-    decided_by="F. Controller",
-    decided_on=date.today(),
-    conclusion=False,          # the human's call, not the model's
-)
-```
-
-`accept()` requires a named individual and takes the conclusion as an explicit argument, so there is no code path that promotes a model's view into the record on its own. The draft id is retained on the conclusion, which gives you the audit trail: what the model saw, what it said, who overrode it and when.
-
-`draft()` raises if you ask it to opine on a `COMPUTED` or `DOCUMENT` clause. Thresholds are never a model's business.
-
-## Judgment calls encoded, and why
-
-The Decision leaves gaps. Each one is resolved explicitly and flagged rather than buried:
-
-- **"Exceeds" is strictly greater than.** AED 100,000.00 exactly does not withdraw the de minimis; 100,000.01 does. Tested at the boundary.
-- **The 12-month window rolls.** It is implemented as twelve calendar months from the assessment date, not as a tax period or a fixed 365-day approximation.
-- **The forward-looking limbs bite at onboarding.** A supplier with no history but a AED 600,000 framework agreement is in enhanced checks from day one. This is the trap in Article 3(4) and Article 6(2), and it is the case most spreadsheets miss.
-- **A triggered risk indicator creates a documentation obligation.** The indicator itself is not automatically disqualifying, but verification remains incomplete until the required clear, justified explanation is retained.
-- **Retrospection is left open.** The Decision does not say whether crossing the AED 100,000 ceiling reaches back to supplies already taken under the de minimis. `retrospective_exposure()` does not answer that. It returns the population at issue so a human can take a documented position. That is the honest behaviour for an ambiguity.
-- **Trailing totals include the assessment date by default.** Silent in the text, conservative either way, and configurable.
-
-## Extending it
-
-The clause registry in `clauses.py` is data, not logic. Adding a requirement means adding a `Clause` with a `kind` and an `applies_when` predicate; the engine picks it up. That is also how you would fork this for another jurisdiction: same engine, different registry.
-
-## Not included
-
-Persistence, the document management integration, and the actual evidence collection. `Evidence.sha256` is there for content addressing when you wire it to a real store. The register row from `VerificationOutcome.register_row()` is designed to land straight in a table.
+</div>
 
 ---
 
-Built from the unofficial English translation. Confirm against the Arabic text in the Official Gazette.
+## Why this exists
+
+From **1 October 2026**, UAE taxable persons must apply specified verification measures to suppliers and taxable supplies before deducting input tax.
+
+The thresholds interact in ways that are easy to miss:
+
+| Rule | Effect |
+|---|---|
+| Supply below **AED 10,000** | Article 6(1) exception may be available |
+| Supplier spend above **AED 100,000** trailing or expected | The AED 10,000 exception is withdrawn |
+| Supplier spend above **AED 375,000** trailing or expected | Enhanced supplier checks apply |
+
+This means an invoice for **AED 2,400** can still require the full supply-verification workflow when that supplier is already above, or expected to exceed, the AED 100,000 ceiling.
+
+## What the engine does
+
+- Calculates the AED 10,000, AED 100,000 and AED 375,000 thresholds using exact `Decimal` arithmetic.
+- Applies rolling trailing and forward-looking 12-month tests.
+- Selects the supplier and supply clauses applicable to the scenario.
+- Checks retained evidence and expiry dates.
+- Routes judgment clauses to a named human reviewer.
+- Produces a flat, explainable record for a verification register.
+- Surfaces open legal or policy questions instead of silently deciding them.
+
+## A deliberate control boundary
+
+```mermaid
+flowchart LR
+    A[Structured facts] --> B[Deterministic engine]
+    B --> C[Decision 13 completion status]
+    D[Evidence documents] --> E[Optional AI draft]
+    E --> F[Named human review]
+    F --> B
+```
+
+Thresholds, evidence existence and completion status are deterministic. The optional AI layer may draft an assessment for judgment-heavy clauses, but it cannot change a result. A named human must explicitly accept or override the draft.
+
+That boundary supports Article 5(3): the retained record must enable the Authority to verify how the procedures were implemented.
+
+## Worked example
+
+```text
+Supply value, excluding VAT       AED   2,400
+Trailing supplier spend           AED 480,000
+Expected forward spend            AED 600,000
+
+Article 6(1) invoice threshold     Below AED 10,000
+Article 6(2) supplier ceiling      Exceeded
+Article 3(4) enhanced checks       Required
+
+Decision 13 verification          Required
+```
+
+The engine then returns the applicable Article 4 checks and identifies missing evidence or human conclusions. It does **not** declare that input tax is recoverable under the VAT Law as a whole.
+
+## Quick start
+
+### Run the scenario tester
+
+```bash
+git clone https://github.com/Chezhira/fta13-uae-input-tax-verification.git
+cd fta13-uae-input-tax-verification
+python -m venv .venv
+
+# Windows
+.venv\Scripts\activate
+
+# macOS / Linux
+source .venv/bin/activate
+
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+### Run the engine and tests
+
+```bash
+pip install -e ".[dev]"
+python demo.py
+python -m pytest -q
+```
+
+The core engine has no runtime dependencies. Streamlit is needed only for the browser-based tester, and Anthropic is optional for advisory drafting.
+
+## Project map
+
+| Path | Purpose |
+|---|---|
+| `fta13/thresholds.py` | Thresholds and rolling-period calculations |
+| `fta13/clauses.py` | Decision requirements expressed as a clause registry |
+| `fta13/engine.py` | Deterministic supplier and supply evaluation |
+| `fta13/ai.py` | Optional, non-binding advisory drafting |
+| `app.py` | Public Streamlit scenario tester |
+| `demo.py` | End-to-end worked example |
+| `tests/` | Boundary, evidence and control tests |
+| `docs/DEVELOPER.md` | Integration and extension guide |
+
+## Interpretations made explicit
+
+- “Less than AED 10,000” and “exceeds” are implemented as strict comparisons.
+- The rolling period is implemented as twelve calendar months.
+- Forward expected spend can trigger controls at onboarding, before any invoice is received.
+- A triggered Article 3(3) risk indicator requires the documented explanation specified in Article 3(3)(b).
+- Potential retrospective exposure is surfaced for human review; the engine does not invent an answer the Decision does not state.
+
+## Legal source and scope
+
+The Arabic version published by the UAE Federal Tax Authority is the authoritative text:
+
+- [FTA Arabic legislation library: Decision No. 13 of 2026](https://tax.gov.ae/ar/Legislation.aspx)  
+  Search for **قرار الهيئة رقم (13) لسنة 2026**. The FTA listing records an issue date of 22 July 2026 and publication date of 20 August 2026.
+
+This open-source project assesses completion of the verification measures in Decision No. 13 only. It does not determine overall input-tax recoverability, replace professional judgment or constitute tax advice. Confirm all interpretations against the Arabic text and the wider UAE VAT Law.
+
+---
+
+<div align="center">
+
+Built as a finance-engineering reference implementation. MIT licensed.
+
+</div>
