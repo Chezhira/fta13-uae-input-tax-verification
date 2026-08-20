@@ -86,3 +86,27 @@ def test_source_rows_expose_page_quote_and_language():
             "Source quote": "اسم المورد: شركة النور",
         }
     ]
+
+
+def test_missing_and_invalid_values_remain_unset():
+    extraction = DocumentExtraction(
+        invoice_date=ExtractedValue(normalized="not-a-date"),
+        consideration_ex_vat=ExtractedValue(normalized="not-an-amount"),
+    )
+
+    assert extraction.invoice_date_value() is None
+    assert extraction.decimal_value() is None
+    assert extraction.review_rows() == []
+    assert extraction.source_rows() == []
+    assert merge_extractions([]) == DocumentExtraction()
+
+
+def test_upload_validation_rejects_empty_and_oversized_documents():
+    with pytest.raises(ValueError, match="empty"):
+        validate_upload("invoice.pdf", "application/pdf", b"")
+    with pytest.raises(ValueError, match="20 MB"):
+        validate_upload(
+            "invoice.pdf",
+            "application/pdf",
+            b"x" * (20 * 1024 * 1024 + 1),
+        )
