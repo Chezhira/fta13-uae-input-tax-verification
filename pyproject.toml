@@ -7,8 +7,16 @@ dependencies = []
 
 [project.optional-dependencies]
 ai = ["anthropic>=0.40"]
-app = ["streamlit>=1.40,<2"]
-dev = ["pytest>=8"]
+app = [
+    "streamlit>=1.40,<2",
+    "openai>=2.24,<3",
+    "pydantic>=2.8,<3",
+    "supabase>=2.15,<3",
+    "reportlab>=4.2,<5",
+    "arabic-reshaper>=3.0,<4",
+    "python-bidi>=0.6,<1",
+]
+dev = ["pytest>=8", "pypdf>=5,<7"]
 
 [build-system]
 requires = ["setuptools>=68"]

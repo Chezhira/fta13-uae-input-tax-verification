@@ -7,7 +7,7 @@
 Turn FTA Decision No. 13 of 2026 into an explainable threshold assessment, guided checklist and downloadable verification record.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-1f6feb)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-28%20passing-2ea043)](tests/test_engine.py)
+[![Tests](https://img.shields.io/badge/tests-33%20passing-2ea043)](tests/)
 [![Coverage](https://img.shields.io/badge/deterministic%20coverage-92%25-2ea043)](.github/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-f2cc60)](LICENSE)
 
@@ -40,6 +40,9 @@ This means an invoice for **AED 2,400** can still require the full supply-verifi
 - Routes judgment clauses to a named human reviewer.
 - Produces a flat, explainable record for a verification register.
 - Exports a readable assessment, CSV register and machine-readable JSON record.
+- Reads Arabic, English and bilingual PDFs/images into reviewable, source-linked fields.
+- Produces a professional PDF verification report with Arabic text support.
+- Optionally saves user-owned assessments and documents in a private Supabase workspace.
 - Surfaces open legal or policy questions instead of silently deciding them.
 
 ## A deliberate control boundary
@@ -77,7 +80,7 @@ The engine then returns the applicable Article 4 checks and identifies missing e
 
 ### Use it online
 
-Open the [live FTA13 readiness and verification tool](https://fta13-uae-input-tax-verification.streamlit.app/). Complete the scenario, supplier checks and supply checks, then download the review record. No installation, document upload or API key is required.
+Open the [live FTA13 readiness and verification tool](https://fta13-uae-input-tax-verification.streamlit.app/). Assessment, document reading and report downloads do not require an account. Optional **Save for later** storage uses passwordless sign-in and the deployment configuration below.
 
 ### Run the scenario tester
 
@@ -95,6 +98,18 @@ source .venv/bin/activate
 pip install -r requirements.txt
 streamlit run app.py
 ```
+
+### Configure document reading and secure saving
+
+Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and set:
+
+- `OPENAI_API_KEY` for Arabic/English PDF and image extraction.
+- `OPENAI_EXTRACTION_MODEL` for the configured vision-capable extraction model.
+- `SUPABASE_URL` and `SUPABASE_ANON_KEY` for passwordless authentication, private storage and PostgreSQL persistence.
+
+Run [`supabase/migrations/001_initial.sql`](supabase/migrations/001_initial.sql) in the Supabase SQL editor. The migration enables row-level security, creates user-owned tables and creates a private storage bucket. Never place a Supabase service-role key in Streamlit secrets.
+
+Configure the Supabase magic-link email template to include `{{ .Token }}` so the app can verify the emailed one-time code without exposing a browser fragment or password.
 
 ### Run the engine and tests
 
@@ -114,6 +129,9 @@ The core engine has no runtime dependencies. Streamlit is needed only for the br
 | `fta13/clauses.py` | Decision requirements expressed as a clause registry |
 | `fta13/engine.py` | Deterministic supplier and supply evaluation |
 | `fta13/ai.py` | Optional, non-binding advisory drafting |
+| `fta13/extraction.py` | Arabic/English structured document extraction and validation |
+| `fta13/storage.py` | Authenticated Supabase persistence and private document storage |
+| `fta13/reporting.py` | Bilingual professional PDF reporting |
 | `app.py` | Public Streamlit scenario tester |
 | `demo.py` | End-to-end worked example |
 | `tests/` | Boundary, evidence and control tests |
@@ -137,6 +155,17 @@ The implementation has been reconciled to the authoritative Arabic Decision. The
 - [FTA legislation library](https://tax.gov.ae/ar/Legislation.aspx). Search for **قرار الهيئة رقم (13) لسنة 2026**. The FTA listing records an issue date of 22 July 2026 and publication date of 20 August 2026.
 
 If any discrepancy arises, the Arabic text prevails. This open-source project assesses completion of the verification measures in Decision No. 13 only. It does not determine overall input-tax recoverability, replace professional judgment or constitute tax advice.
+
+## Privacy and AI control boundary
+
+- Files are processed only after the user confirms they are authorised to do so.
+- The OpenAI Responses request uses `store=False`; extracted values remain proposals until a person reviews them.
+- Original Arabic and English text, normalized values, confidence and page-level source quotes are kept together.
+- Database saving is disabled until the user confirms that the AI-populated fields were reviewed against the source documents.
+- Documents are persisted only when an authenticated user explicitly saves the assessment.
+- Sign-in appears only inside the optional **Save for later** section; anonymous documents are not persisted by the app.
+- Supabase row-level security limits database rows and private storage paths to their owning user.
+- The deterministic engine, not the AI extraction model, applies the Decision 13 rules.
 
 ---
 

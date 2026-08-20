@@ -1,16 +1,23 @@
-"""Public, no-upload readiness workflow for FTA Decision No. 13 of 2026."""
+"""Bilingual, document-assisted workflow for FTA Decision No. 13 of 2026."""
 
 from __future__ import annotations
 
 import csv
 import io
 import json
+import os
 from datetime import date, timedelta
 from decimal import Decimal
 
 import streamlit as st
 
 from fta13.engine import VerificationOutcome, evaluate_supplier, evaluate_supply
+from fta13.extraction import (
+    DocumentExtraction,
+    extract_document,
+    merge_extractions,
+    validate_upload,
+)
 from fta13.models import (
     Evidence,
     HumanConclusion,
@@ -21,6 +28,7 @@ from fta13.models import (
     Supply,
     Verdict,
 )
+from fta13.reporting import build_pdf_report
 
 
 st.set_page_config(
@@ -36,9 +44,61 @@ st.caption(
 )
 st.warning(
     "Educational reference tool only. It assesses Decision No. 13 verification "
-    "measures, not overall input-tax recoverability. Do not enter confidential "
-    "or personal information. This app does not store data or accept document uploads."
+    "measures, not overall input-tax recoverability. AI-extracted information must "
+    "be reviewed by a person before it is relied upon."
 )
+
+
+def setting(name: str, default: str = "") -> str:
+    try:
+        return str(st.secrets.get(name, os.getenv(name, default)))
+    except Exception:
+        return os.getenv(name, default)
+
+
+def apply_extraction(item: DocumentExtraction) -> None:
+    """Prefill only supported values; the visible widgets remain human-editable."""
+    mapping = {
+        "supplier_ref_input": item.supplier_reference.normalized or item.supplier_reference.original,
+        "supply_ref_input": item.invoice_number.normalized or item.invoice_number.original,
+        "country_input": item.country_of_incorporation.normalized,
+        "description_input": item.supply_description.original,
+    }
+    for key, value in mapping.items():
+        if value:
+            st.session_state[key] = value
+    amount = item.decimal_value()
+    if amount is not None and amount >= 0:
+        st.session_state["invoice_value_input"] = float(amount)
+    extracted_date = item.invoice_date_value()
+    if extracted_date and extracted_date >= date(2026, 10, 1):
+        st.session_state["assessment_date_input"] = extracted_date
+    method = item.payment_method.normalized.lower()
+    if method in {"cash", "نقد", "نقداً", "نقدا"}:
+        st.session_state["payment_method_input"] = "Cash"
+    elif method:
+        st.session_state["payment_method_input"] = "Electronic"
+    for key, value in {
+        "is_goods_input": item.is_goods,
+        "third_party_input": item.third_party_in_payment,
+        "intermediary_input": item.supplier_is_intermediary,
+    }.items():
+        if value is not None:
+            st.session_state[key] = value
+    evidence_keys = {
+        "certificate_of_incorporation": "evidence_incorporation",
+        "representative_id": "evidence_representative_id",
+        "passport": "evidence_passport",
+        "meeting_record": "evidence_meeting",
+        "place_of_business_check": "evidence_business_place",
+        "bank_confirmation": "evidence_bank",
+        "cash_payment_rationale": "evidence_cash_reason",
+        "origin_document": "evidence_origin",
+        "title_document": "evidence_title",
+    }
+    for evidence_kind in item.evidence_kinds:
+        if evidence_kind in evidence_keys:
+            st.session_state[evidence_keys[evidence_kind]] = True
 
 
 def money(value: float) -> Decimal:
@@ -283,6 +343,101 @@ def make_markdown_report(
     return "\n".join(lines)
 
 
+openai_key = setting("OPENAI_API_KEY")
+extraction_model = setting("OPENAI_EXTRACTION_MODEL", "gpt-5.6")
+supabase_url = setting("SUPABASE_URL")
+supabase_key = setting("SUPABASE_ANON_KEY")
+
+st.subheader("Document assistant | مساعد المستندات")
+st.caption(
+    "Upload Arabic, English or bilingual PDFs and images. AI proposes fields and "
+    "page-level sources; you review and correct them before assessment."
+)
+uploaded_documents = st.file_uploader(
+    "Supplier and supply documents",
+    type=["pdf", "png", "jpg", "jpeg"],
+    accept_multiple_files=True,
+    help="Up to five documents, maximum 20 MB each.",
+)
+language_label = st.selectbox(
+    "Document language",
+    ["Detect automatically", "Arabic | العربية", "English", "Arabic + English"],
+)
+language_hint = {
+    "Detect automatically": "auto",
+    "Arabic | العربية": "ar",
+    "English": "en",
+    "Arabic + English": "mixed",
+}[language_label]
+ai_consent = st.checkbox(
+    "I am authorised to process these documents and understand they will be sent "
+    "to the configured AI provider for extraction.",
+    key="ai_processing_consent",
+)
+extract_disabled = not uploaded_documents or not ai_consent or not openai_key
+if not openai_key:
+    st.info("AI extraction is disabled until OPENAI_API_KEY is configured.")
+if st.button("Read documents in Arabic and English", disabled=extract_disabled):
+    if len(uploaded_documents) > 5:
+        st.error("Upload no more than five documents per assessment.")
+    else:
+        extractions = []
+        with st.spinner("Reading the documents and locating supporting fields..."):
+            try:
+                for uploaded in uploaded_documents:
+                    content = uploaded.getvalue()
+                    validate_upload(uploaded.name, uploaded.type, content)
+                    result = extract_document(
+                        filename=uploaded.name,
+                        mime_type=uploaded.type,
+                        content=content,
+                        api_key=openai_key,
+                        model=extraction_model,
+                        language_hint=language_hint,
+                    )
+                    extractions.append(result)
+                st.session_state["document_extractions"] = [
+                    item.model_dump(mode="json") for item in extractions
+                ]
+                merged_extraction = merge_extractions(extractions)
+                st.session_state["merged_extraction"] = merged_extraction.model_dump(
+                    mode="json"
+                )
+                apply_extraction(merged_extraction)
+                st.success("Extraction complete. Review every populated field below.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Document extraction failed: {exc}")
+
+merged_extraction = None
+if st.session_state.get("merged_extraction"):
+    merged_extraction = DocumentExtraction.model_validate(
+        st.session_state["merged_extraction"]
+    )
+    languages = ", ".join(
+        {"ar": "Arabic", "en": "English", "mixed": "Arabic + English", "unknown": "Unknown"}.get(code, code)
+        for code in merged_extraction.detected_languages
+    )
+    st.success(f"Detected language(s): {languages or 'Not established'}")
+    rows = merged_extraction.review_rows()
+    if rows:
+        st.dataframe(rows, hide_index=True, width="stretch")
+    source_rows = merged_extraction.source_rows()
+    if source_rows:
+        with st.expander("Page-level source quotes | اقتباسات المصدر"):
+            st.dataframe(source_rows, hide_index=True, width="stretch")
+    for warning in merged_extraction.warnings:
+        st.warning(warning)
+    extraction_reviewed = st.checkbox(
+        "I reviewed and corrected the AI-populated fields against the documents.",
+        key="ai_extraction_reviewed",
+    )
+    if not extraction_reviewed:
+        st.warning("Review confirmation is required before this assessment can be saved.")
+else:
+    extraction_reviewed = True
+
+
 tab_scenario, tab_supplier, tab_supply, tab_report = st.tabs(
     ["1. Scenario", "2. Supplier checks", "3. Supply checks", "4. Report"]
 )
@@ -295,16 +450,19 @@ with tab_scenario:
             "Supply / assessment date",
             value=date(2026, 10, 1),
             min_value=date(2026, 10, 1),
+            key="assessment_date_input",
         )
         supplier_ref = st.text_input(
             "Supplier reference",
             value="SUPPLIER-001",
             help="Use an internal reference, not a legal name.",
+            key="supplier_ref_input",
         )
         supply_ref = st.text_input(
             "Supply reference",
             value="SUPPLY-001",
             help="Use an internal invoice or transaction reference.",
+            key="supply_ref_input",
         )
         person_type_label = st.selectbox(
             "Supplier type", ["Legal person", "Natural person"]
@@ -313,6 +471,7 @@ with tab_scenario:
             "Country of incorporation (ISO-2)",
             value="AE",
             max_chars=2,
+            key="country_input",
         ).upper()
     with c2:
         invoice_value = st.number_input(
@@ -320,6 +479,7 @@ with tab_scenario:
             min_value=0.0,
             value=2400.0,
             step=100.0,
+            key="invoice_value_input",
         )
         trailing_spend = st.number_input(
             "Prior 12-month supplier spend (AED)",
@@ -415,7 +575,8 @@ with tab_supplier:
         supplier_evidence += evidence(
             "certificate_of_incorporation",
             st.checkbox(
-                "Incorporation verified through an official database or valid certificate"
+                "Incorporation verified through an official database or valid certificate",
+                key="evidence_incorporation",
             ),
             assessment_date,
         )
@@ -430,25 +591,35 @@ with tab_supplier:
         supplier_evidence += evidence(
             "representative_id",
             st.checkbox(
-                "Valid ID held for the authorised director, agent or employee"
+                "Valid ID held for the authorised director, agent or employee",
+                key="evidence_representative_id",
             ),
             assessment_date,
         )
     else:
         supplier_evidence += evidence(
             "passport",
-            st.checkbox("Valid proof of identity held for the natural-person supplier"),
+            st.checkbox(
+                "Valid proof of identity held for the natural-person supplier",
+                key="evidence_passport",
+            ),
             assessment_date,
         )
         supplier_evidence += evidence(
             "meeting_record",
-            st.checkbox("In-person or virtual pre-supply meeting documented"),
+            st.checkbox(
+                "In-person or virtual pre-supply meeting documented",
+                key="evidence_meeting",
+            ),
             assessment_date,
         )
 
     supplier_evidence += evidence(
         "place_of_business_check",
-        st.checkbox("Actual place of business verified electronically or by visit"),
+        st.checkbox(
+            "Actual place of business verified electronically or by visit",
+            key="evidence_business_place",
+        ),
         assessment_date,
     )
     item = collect_conclusion(
@@ -497,7 +668,7 @@ with tab_supplier:
         st.subheader("Enhanced checks: Article 3(4)")
         supplier_evidence += evidence(
             "bank_confirmation",
-            st.checkbox("Written UAE bank confirmation is held"),
+            st.checkbox("Written UAE bank confirmation is held", key="evidence_bank"),
             assessment_date,
         )
         item = collect_conclusion(
@@ -521,15 +692,24 @@ with tab_supply:
     st.header("Supply verification: Article 4")
     sc1, sc2 = st.columns(2)
     with sc1:
-        payment_label = st.selectbox("Payment method", ["Electronic", "Cash"])
-        third_party = st.checkbox("Third party involved in payment")
+        payment_label = st.selectbox(
+            "Payment method", ["Electronic", "Cash"], key="payment_method_input"
+        )
+        third_party = st.checkbox(
+            "Third party involved in payment", key="third_party_input"
+        )
         offshore = st.checkbox("Payment account outside incorporation country")
     with sc2:
-        is_goods = st.checkbox("This is a supply of goods", value=True)
-        intermediary = st.checkbox("Supplier acts as an intermediary")
+        is_goods = st.checkbox(
+            "This is a supply of goods", value=True, key="is_goods_input"
+        )
+        intermediary = st.checkbox(
+            "Supplier acts as an intermediary", key="intermediary_input"
+        )
         description = st.text_input(
             "Plain-language supply description",
             placeholder="For example: replacement machine parts",
+            key="description_input",
         )
 
     supply_evidence: list[Evidence] = []
@@ -566,7 +746,10 @@ with tab_supply:
     if payment_label == "Cash":
         supply_evidence += evidence(
             "cash_payment_rationale",
-            st.checkbox("Documented commercial reason for cash payment is held"),
+            st.checkbox(
+                "Documented commercial reason for cash payment is held",
+                key="evidence_cash_reason",
+            ),
             assessment_date,
         )
         item = collect_conclusion(
@@ -580,12 +763,17 @@ with tab_supply:
     if is_goods:
         supply_evidence += evidence(
             "origin_document",
-            st.checkbox("Authenticity and origin evidence is held"),
+            st.checkbox(
+                "Authenticity and origin evidence is held", key="evidence_origin"
+            ),
             assessment_date,
         )
         supply_evidence += evidence(
             "title_document",
-            st.checkbox("Supplier ownership or right-to-dispose evidence is held"),
+            st.checkbox(
+                "Supplier ownership or right-to-dispose evidence is held",
+                key="evidence_title",
+            ),
             assessment_date,
         )
 
@@ -703,11 +891,19 @@ with tab_report:
         default=str,
     )
 
+    pdf_report = build_pdf_report(
+        supplier_outcome=supplier_outcome,
+        supply_outcome=supply_outcome,
+        extracted_document=(
+            merged_extraction.model_dump(mode="json") if merged_extraction else None
+        ),
+    )
+
     st.download_button(
-        "Download readable assessment (.md)",
-        data=report,
-        file_name=f"fta13_assessment_{supply.supply_id}.md",
-        mime="text/markdown",
+        "Download professional verification report (.pdf)",
+        data=pdf_report,
+        file_name=f"fta13_verification_{supply.supply_id}.pdf",
+        mime="application/pdf",
         width="stretch",
     )
     dc1, dc2 = st.columns(2)
@@ -727,6 +923,96 @@ with tab_report:
             mime="application/json",
             width="stretch",
         )
+    with st.expander("Save for later (optional)"):
+        st.caption(
+            "Sign-in is required only to store this assessment and its documents "
+            "privately. Downloads and anonymous use do not require an account."
+        )
+        if not (supabase_url and supabase_key):
+            st.info("Private saving is not configured on this deployment.")
+        elif "supabase_session" not in st.session_state:
+            login_email = st.text_input("Email for secure sign-in")
+            if st.button("Email me a sign-in code", disabled=not login_email):
+                try:
+                    from fta13.storage import request_email_otp
+
+                    request_email_otp(supabase_url, supabase_key, login_email)
+                    st.session_state["otp_email"] = login_email
+                    st.success("Check your email for the one-time sign-in code.")
+                except Exception as exc:
+                    st.error(f"Sign-in code could not be sent: {exc}")
+            if st.session_state.get("otp_email"):
+                otp_code = st.text_input("One-time code", max_chars=12)
+                if st.button("Verify code", disabled=not otp_code):
+                    try:
+                        from fta13.storage import verify_email_otp
+
+                        st.session_state["supabase_session"] = verify_email_otp(
+                            supabase_url,
+                            supabase_key,
+                            st.session_state["otp_email"],
+                            otp_code,
+                        )
+                        del st.session_state["otp_email"]
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Code verification failed: {exc}")
+        else:
+            st.success("Signed in. You can now save this assessment privately.")
+            if st.button(
+                "Save assessment and documents privately",
+                width="stretch",
+                disabled=not extraction_reviewed,
+            ):
+                try:
+                    from fta13.storage import SupabaseStore
+
+                    session = st.session_state["supabase_session"]
+                    store = SupabaseStore(
+                        supabase_url,
+                        supabase_key,
+                        session["access_token"],
+                        session["refresh_token"],
+                    )
+                    extraction_items = st.session_state.get(
+                        "document_extractions", []
+                    )
+                    document_ids = []
+                    for index, uploaded in enumerate(uploaded_documents or []):
+                        extraction_payload = (
+                            extraction_items[index]
+                            if index < len(extraction_items)
+                            else {}
+                        )
+                        saved = store.save_document(
+                            filename=uploaded.name,
+                            mime_type=uploaded.type,
+                            content=uploaded.getvalue(),
+                            extraction=extraction_payload,
+                        )
+                        document_ids.append(saved.document_id)
+                    status = (
+                        "exception_available"
+                        if exception_available
+                        else ("complete" if overall_complete else "open")
+                    )
+                    assessment_id = store.save_assessment(
+                        {
+                            "supplier_reference": supplier.supplier_id,
+                            "supply_reference": supply.supply_id,
+                            "status": status,
+                            "ai_extraction_reviewed": extraction_reviewed,
+                            "document_ids": document_ids,
+                            "supplier": supplier_outcome.register_row(),
+                            "supply": supply_outcome.register_row(),
+                        }
+                    )
+                    st.success(f"Assessment saved securely: {assessment_id}")
+                except Exception as exc:
+                    st.error(f"Assessment could not be saved: {exc}")
+            if st.button("Sign out"):
+                del st.session_state["supabase_session"]
+                st.rerun()
     with st.expander("Preview readable assessment"):
         st.markdown(report)
 
@@ -736,8 +1022,10 @@ with st.expander("Interpretation and privacy notes"):
         - Threshold comparisons follow the Decision's strict wording: below
           AED 10,000 and exceeds AED 100,000 / AED 375,000.
         - The lookback is implemented as twelve calendar months.
-        - The public app records visitor assertions that evidence is held. It
-          does not inspect, validate, upload or retain the documents.
+        - AI document reading supports Arabic and English. It proposes fields;
+          a person must review them before relying on the assessment.
+        - Uploaded files are retained only when an authenticated user explicitly
+          saves them to the configured private Supabase workspace.
         - Forward expected spend can trigger checks before historic spend
           reaches a threshold.
         - The implementation was reconciled to the authoritative Arabic
