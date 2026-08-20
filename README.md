@@ -7,7 +7,7 @@
 Turn FTA Decision No. 13 of 2026 into an explainable threshold assessment, guided checklist and downloadable verification record.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-1f6feb)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-33%20passing-2ea043)](tests/)
+[![Tests](https://img.shields.io/badge/tests-35%20passing-2ea043)](tests/)
 [![Coverage](https://img.shields.io/badge/deterministic%20coverage-92%25-2ea043)](.github/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-f2cc60)](LICENSE)
 
