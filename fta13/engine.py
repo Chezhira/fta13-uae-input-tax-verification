@@ -207,6 +207,17 @@ def evaluate_supplier(
                 else f"(last verified {supplier.verified_on}, due {due})"
             )
         )
+        out.results.append(
+            ClauseResult(
+                clause_id="5.1",
+                article="5(1)",
+                requirement="Supplier verified on first dealing, or within 12 months.",
+                kind=CheckKind.COMPUTED,
+                verdict=Verdict.FAILED,
+                blocking=True,
+                detail=f"last verified: {supplier.verified_on}",
+            )
+        )
     return out
 
 
