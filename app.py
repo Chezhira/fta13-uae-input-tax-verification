@@ -740,7 +740,8 @@ with st.expander("Interpretation and privacy notes"):
           does not inspect, validate, upload or retain the documents.
         - Forward expected spend can trigger checks before historic spend
           reaches a threshold.
-        - Built from the unofficial English translation. Confirm every
-          interpretation against the authoritative Arabic publication.
+        - The implementation was reconciled to the authoritative Arabic
+          Decision and uses the FTA's unofficial English translation for
+          English-language labels. If any discrepancy arises, the Arabic text prevails.
         """
     )

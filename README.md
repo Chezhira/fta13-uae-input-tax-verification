@@ -118,6 +118,7 @@ The core engine has no runtime dependencies. Streamlit is needed only for the br
 | `demo.py` | End-to-end worked example |
 | `tests/` | Boundary, evidence and control tests |
 | `docs/DEVELOPER.md` | Integration and extension guide |
+| `docs/legal-sources/` | Authoritative Arabic Decision and reconciliation record |
 
 ## Interpretations made explicit
 
@@ -129,12 +130,13 @@ The core engine has no runtime dependencies. Streamlit is needed only for the br
 
 ## Legal source and scope
 
-The Arabic version published by the UAE Federal Tax Authority is the authoritative text:
+The implementation has been reconciled to the authoritative Arabic Decision. The FTA's unofficial English translation is used for English-language labels and descriptions:
 
-- [FTA Arabic legislation library: Decision No. 13 of 2026](https://tax.gov.ae/ar/Legislation.aspx)  
-  Search for **قرار الهيئة رقم (13) لسنة 2026**. The FTA listing records an issue date of 22 July 2026 and publication date of 20 August 2026.
+- [Authoritative Arabic Decision retained in this repository](docs/legal-sources/FTA-Decision-13-2026-Arabic.pdf)
+- [Arabic-to-implementation reconciliation](docs/legal-sources/RECONCILIATION.md)
+- [FTA legislation library](https://tax.gov.ae/ar/Legislation.aspx). Search for **قرار الهيئة رقم (13) لسنة 2026**. The FTA listing records an issue date of 22 July 2026 and publication date of 20 August 2026.
 
-This open-source project assesses completion of the verification measures in Decision No. 13 only. It does not determine overall input-tax recoverability, replace professional judgment or constitute tax advice. Confirm all interpretations against the Arabic text and the wider UAE VAT Law.
+If any discrepancy arises, the Arabic text prevails. This open-source project assesses completion of the verification measures in Decision No. 13 only. It does not determine overall input-tax recoverability, replace professional judgment or constitute tax advice.
 
 ---
 
