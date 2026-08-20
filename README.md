@@ -4,14 +4,14 @@
 
 ### A reproducible UAE VAT supplier and supply verification workflow
 
-Turn FTA Decision No. 13 of 2026 into an explainable checklist, threshold assessment and audit-ready verification record.
+Turn FTA Decision No. 13 of 2026 into an explainable threshold assessment, guided checklist and downloadable verification record.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-1f6feb)](https://www.python.org/)
 [![Tests](https://img.shields.io/badge/tests-28%20passing-2ea043)](tests/test_engine.py)
 [![Coverage](https://img.shields.io/badge/deterministic%20coverage-92%25-2ea043)](.github/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-f2cc60)](LICENSE)
 
-[Try locally](#quick-start) · [See the worked example](#worked-example) · [Read the developer guide](docs/DEVELOPER.md) · [Official Arabic decision](https://tax.gov.ae/ar/Legislation.aspx)
+[**Launch the live tester**](https://fta13-uae-input-tax-verification.streamlit.app/) · [Try locally](#quick-start) · [Worked example](#worked-example) · [Developer guide](docs/DEVELOPER.md) · [Official Arabic decision](https://tax.gov.ae/ar/Legislation.aspx)
 
 </div>
 
@@ -39,6 +39,7 @@ This means an invoice for **AED 2,400** can still require the full supply-verifi
 - Checks retained evidence and expiry dates.
 - Routes judgment clauses to a named human reviewer.
 - Produces a flat, explainable record for a verification register.
+- Exports a readable assessment, CSV register and machine-readable JSON record.
 - Surfaces open legal or policy questions instead of silently deciding them.
 
 ## A deliberate control boundary
@@ -73,6 +74,10 @@ Decision 13 verification          Required
 The engine then returns the applicable Article 4 checks and identifies missing evidence or human conclusions. It does **not** declare that input tax is recoverable under the VAT Law as a whole.
 
 ## Quick start
+
+### Use it online
+
+Open the [live FTA13 readiness and verification tool](https://fta13-uae-input-tax-verification.streamlit.app/). Complete the scenario, supplier checks and supply checks, then download the review record. No installation, document upload or API key is required.
 
 ### Run the scenario tester
 

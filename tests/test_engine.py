@@ -148,6 +148,7 @@ def test_stale_verification_blocks_the_supply():
 def test_first_dealing_flags_verification_needed():
     out = evaluate_supplier(legal_supplier(verified_on=None), as_of=AS_OF)
     assert any("no prior verification" in w for w in out.warnings)
+    assert any(g.clause_id == "5.1" for g in out.blocking_gaps)
 
 
 # --- evidence-driven document clauses --------------------------------------
