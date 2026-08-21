@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import re
+import unicodedata
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Literal
@@ -119,10 +121,66 @@ def sha256_bytes(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
+def _canonical_identity(value: ExtractedValue) -> str:
+    text = value.normalized or value.original
+    text = unicodedata.normalize("NFKC", text).casefold()
+    return re.sub(r"[^\w]+", "", text, flags=re.UNICODE)
+
+
+def batch_identity_rows(
+    items: list[DocumentExtraction], filenames: list[str]
+) -> list[dict]:
+    """Show the identity anchors extracted from each uploaded document."""
+    rows = []
+    for index, item in enumerate(items):
+        rows.append(
+            {
+                "Document": (
+                    filenames[index]
+                    if index < len(filenames)
+                    else f"Document {index + 1}"
+                ),
+                "Type": item.document_type.replace("_", " ").title(),
+                "Supplier (Arabic)": item.supplier_name_ar.original,
+                "Supplier (English)": item.supplier_name_en.original,
+                "TRN": item.trn.normalized or item.trn.original,
+                "Invoice": (
+                    item.invoice_number.normalized or item.invoice_number.original
+                ),
+            }
+        )
+    return rows
+
+
+def batch_identity_conflicts(items: list[DocumentExtraction]) -> list[str]:
+    """Return blocking conflicts for a one-supplier, one-supply batch."""
+    checks = {
+        "Arabic supplier name": "supplier_name_ar",
+        "English supplier name": "supplier_name_en",
+        "TRN": "trn",
+        "invoice number": "invoice_number",
+    }
+    conflicts = []
+    for label, field_name in checks.items():
+        values = {
+            _canonical_identity(getattr(item, field_name))
+            for item in items
+            if _canonical_identity(getattr(item, field_name))
+        }
+        if len(values) > 1:
+            conflicts.append(
+                f"Conflicting {label} values were found across the uploaded documents."
+            )
+    return conflicts
+
+
 def merge_extractions(items: list[DocumentExtraction]) -> DocumentExtraction:
     """Combine documents, retaining the most confident supported value per field."""
     if not items:
         return DocumentExtraction()
+    conflicts = batch_identity_conflicts(items)
+    if conflicts:
+        raise ValueError(" ".join(conflicts))
     merged = items[0].model_copy(deep=True)
     merged.detected_languages = []
     merged.evidence_kinds = []

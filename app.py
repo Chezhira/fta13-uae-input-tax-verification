@@ -14,6 +14,8 @@ import streamlit as st
 from fta13.engine import VerificationOutcome, evaluate_supplier, evaluate_supply
 from fta13.extraction import (
     DocumentExtraction,
+    batch_identity_conflicts,
+    batch_identity_rows,
     extract_document,
     merge_extractions,
     validate_upload,
@@ -350,11 +352,12 @@ supabase_key = setting("SUPABASE_ANON_KEY")
 
 st.subheader("Document assistant | مساعد المستندات")
 st.caption(
-    "Upload Arabic, English or bilingual PDFs and images. AI proposes fields and "
-    "page-level sources; you review and correct them before assessment."
+    "Upload Arabic, English or bilingual documents for one supplier and one "
+    "supply/invoice only. AI compares identities, proposes fields and provides "
+    "page-level sources for human review."
 )
 uploaded_documents = st.file_uploader(
-    "Supplier and supply documents",
+    "Documents for one supplier and one supply",
     type=["pdf", "png", "jpg", "jpeg"],
     accept_multiple_files=True,
     help="Up to five documents, maximum 20 MB each.",
@@ -374,7 +377,17 @@ ai_consent = st.checkbox(
     "to the configured AI provider for extraction.",
     key="ai_processing_consent",
 )
-extract_disabled = not uploaded_documents or not ai_consent or not openai_key
+single_batch_confirmed = st.checkbox(
+    "I confirm that all uploaded documents relate to the same supplier and the "
+    "same supply/invoice.",
+    key="single_supplier_batch_confirmed",
+)
+extract_disabled = (
+    not uploaded_documents
+    or not ai_consent
+    or not single_batch_confirmed
+    or not openai_key
+)
 if not openai_key:
     st.info("AI extraction is disabled until OPENAI_API_KEY is configured.")
 if st.button("Read documents in Arabic and English", disabled=extract_disabled):
@@ -399,6 +412,15 @@ if st.button("Read documents in Arabic and English", disabled=extract_disabled):
                 st.session_state["document_extractions"] = [
                     item.model_dump(mode="json") for item in extractions
                 ]
+                filenames = [uploaded.name for uploaded in uploaded_documents]
+                st.session_state["batch_identity_rows"] = batch_identity_rows(
+                    extractions, filenames
+                )
+                conflicts = batch_identity_conflicts(extractions)
+                st.session_state["batch_identity_conflicts"] = conflicts
+                if conflicts:
+                    st.session_state.pop("merged_extraction", None)
+                    st.rerun()
                 merged_extraction = merge_extractions(extractions)
                 st.session_state["merged_extraction"] = merged_extraction.model_dump(
                     mode="json"
@@ -408,6 +430,17 @@ if st.button("Read documents in Arabic and English", disabled=extract_disabled):
                 st.rerun()
             except Exception as exc:
                 st.error(f"Document extraction failed: {exc}")
+
+if st.session_state.get("batch_identity_rows"):
+    st.markdown("**Document identity comparison**")
+    st.dataframe(
+        st.session_state["batch_identity_rows"], hide_index=True, width="stretch"
+    )
+for conflict in st.session_state.get("batch_identity_conflicts", []):
+    st.error(
+        f"Batch blocked: {conflict} Start a separate assessment for each "
+        "supplier or invoice."
+    )
 
 merged_extraction = None
 if st.session_state.get("merged_extraction"):
