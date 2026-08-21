@@ -7,6 +7,8 @@ from fta13.extraction import (
     DocumentExtraction,
     ExtractedValue,
     SourceReference,
+    batch_identity_conflicts,
+    batch_identity_rows,
     merge_extractions,
     sha256_bytes,
     validate_upload,
@@ -38,7 +40,7 @@ def test_arabic_and_english_values_are_preserved():
 
 def test_merge_keeps_most_confident_supported_value():
     first = DocumentExtraction(
-        invoice_number=value("INV-1?", "INV-1", 0.55),
+        invoice_number=value("INV-100?", "INV-100", 0.55),
         detected_languages=["en"],
     )
     second = DocumentExtraction(
@@ -110,3 +112,42 @@ def test_upload_validation_rejects_empty_and_oversized_documents():
             "application/pdf",
             b"x" * (20 * 1024 * 1024 + 1),
         )
+
+
+def test_batch_identity_rows_compare_each_document():
+    first = DocumentExtraction(
+        document_type="commercial_licence",
+        supplier_name_en=value("Al Noor LLC", "Al Noor LLC", 0.98),
+        trn=value("100123456700003", "100123456700003", 0.99),
+    )
+    second = DocumentExtraction(
+        document_type="tax_invoice",
+        supplier_name_en=value("AL NOOR LLC", "AL NOOR LLC", 0.97),
+        trn=value("١٠٠١٢٣٤٥٦٧٠٠٠٠٣", "100123456700003", 0.99, "ar"),
+        invoice_number=value("INV-001", "INV-001", 0.99),
+    )
+
+    rows = batch_identity_rows([first, second], ["licence.pdf", "invoice.pdf"])
+
+    assert rows[0]["Document"] == "licence.pdf"
+    assert rows[1]["Invoice"] == "INV-001"
+    assert batch_identity_conflicts([first, second]) == []
+
+
+def test_conflicting_supplier_batch_is_blocked():
+    first = DocumentExtraction(
+        supplier_name_en=value("Al Noor LLC", "Al Noor LLC", 0.98),
+        trn=value("100123456700003", "100123456700003", 0.99),
+        invoice_number=value("INV-001", "INV-001", 0.99),
+    )
+    second = DocumentExtraction(
+        supplier_name_en=value("Different Supplier LLC", "Different Supplier LLC", 0.98),
+        trn=value("100999999900003", "100999999900003", 0.99),
+        invoice_number=value("INV-999", "INV-999", 0.99),
+    )
+
+    conflicts = batch_identity_conflicts([first, second])
+
+    assert len(conflicts) == 3
+    with pytest.raises(ValueError, match="Conflicting English supplier name"):
+        merge_extractions([first, second])

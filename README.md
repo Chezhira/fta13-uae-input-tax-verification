@@ -5,7 +5,7 @@
 **Document-assisted supplier and supply verification for UAE FTA Decision No. 13 of 2026**
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB)](https://www.python.org/)
-[![CI](https://img.shields.io/badge/CI-35%20tests%20passing-2EA043)](.github/workflows/ci.yml)
+[![CI](https://img.shields.io/badge/CI-37%20tests%20passing-2EA043)](.github/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-90%25%2B-2EA043)](.github/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-F2CC60)](LICENSE)
 
@@ -31,6 +31,8 @@ Users can:
 - optionally sign in to save an assessment and its documents privately.
 
 Assessment, document reading, and report downloads do not require an account. Sign-in appears only under **Save for later**.
+
+Each assessment accepts up to five supporting documents, but they must relate to one supplier and one supply/invoice. The app compares supplier names, TRNs and invoice references document by document and blocks conflicting batches before fields are merged.
 
 ## Why the thresholds matter
 
