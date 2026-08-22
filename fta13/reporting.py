@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Chez Solutions. Authored by Zahidah Murira.
+# MIT License: https://github.com/Chezhira/fta13-uae-input-tax-verification
+
 """Professional PDF verification report with Arabic/English text support."""
 
 from __future__ import annotations
