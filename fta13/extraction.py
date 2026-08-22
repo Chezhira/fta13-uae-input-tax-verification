@@ -14,6 +14,11 @@ from pydantic import BaseModel, Field, field_validator
 
 
 Language = Literal["ar", "en", "mixed", "unknown"]
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+
+
+class UploadValidationError(ValueError):
+    """Raised when a user upload cannot safely enter the extraction request."""
 
 
 class SourceReference(BaseModel):
@@ -210,8 +215,11 @@ def validate_upload(filename: str, mime_type: str, content: bytes) -> None:
         raise ValueError("Only PDF, PNG and JPEG documents are supported.")
     if not content:
         raise ValueError("The uploaded document is empty.")
-    if len(content) > 20 * 1024 * 1024:
-        raise ValueError("Each document must be 20 MB or smaller.")
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise UploadValidationError(
+            "Each document must be 5 MB or smaller because files are sent inline "
+            "to the AI extraction service. Compress or split the document and retry."
+        )
     suffix = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
     expected = {
         "application/pdf": {"pdf"},

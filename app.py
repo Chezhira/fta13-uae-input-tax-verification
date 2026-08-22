@@ -16,6 +16,7 @@ from fta13.clauses import ALL_CLAUSES
 from fta13.engine import VerificationOutcome, evaluate_supplier, evaluate_supply
 from fta13.extraction import (
     DocumentExtraction,
+    UploadValidationError,
     batch_identity_conflicts,
     batch_identity_rows,
     extract_document,
@@ -437,7 +438,7 @@ uploaded_documents = st.file_uploader(
     "Documents for one supplier and one supply",
     type=["pdf", "png", "jpg", "jpeg"],
     accept_multiple_files=True,
-    help="Up to five documents, maximum 20 MB each.",
+    help="Up to five documents, maximum 5 MB each.",
 )
 language_label = st.selectbox(
     "Document language",
@@ -505,6 +506,8 @@ if st.button("Read documents in Arabic and English", disabled=extract_disabled):
                 apply_extraction(merged_extraction)
                 st.success("Extraction complete. Review every populated field below.")
                 st.rerun()
+            except UploadValidationError as exc:
+                st.error(f"Upload rejected: {exc}")
             except Exception as exc:
                 st.error(f"Document extraction failed: {exc}")
 
@@ -1045,6 +1048,7 @@ with tab_report:
         ruleset_label=RULESET_LABEL,
         generated_on_utc=generated_on_utc,
         reviewer=reviewer,
+        exception_available=exception_available,
     )
 
     exports_locked = merged_extraction is not None and not extraction_reviewed
@@ -1184,6 +1188,9 @@ with st.expander("Interpretation and privacy notes"):
           a person must review them before relying on the assessment.
         - Uploaded files are retained only when an authenticated user explicitly
           saves them to the configured private Supabase workspace.
+        - Uploaded documents may contain legal names and TRNs. Extracted names,
+          invoice references and related source fields may appear in the generated
+          PDF, but the app does not retain them unless the user signs in and saves.
         - Forward expected spend can trigger checks before historic spend
           reaches a threshold.
         - The implementation was reconciled to the authoritative Arabic

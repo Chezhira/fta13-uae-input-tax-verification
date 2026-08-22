@@ -106,11 +106,11 @@ def test_missing_and_invalid_values_remain_unset():
 def test_upload_validation_rejects_empty_and_oversized_documents():
     with pytest.raises(ValueError, match="empty"):
         validate_upload("invoice.pdf", "application/pdf", b"")
-    with pytest.raises(ValueError, match="20 MB"):
+    with pytest.raises(ValueError, match="5 MB"):
         validate_upload(
             "invoice.pdf",
             "application/pdf",
-            b"x" * (20 * 1024 * 1024 + 1),
+            b"x" * (5 * 1024 * 1024 + 1),
         )
 
 
