@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+title: "fta13: verification engine for UAE FTA Decision No. 13 of 2026"
+message: "If you use this software, please cite it."
+type: software
+authors:
+  - family-names: Murira
+    given-names: Zahidah
+repository-code: "https://github.com/Chezhira/fta13-uae-input-tax-verification"
+license: MIT
+date-released: "2026-08-22"
+keywords:
+  - value-added-tax
+  - tax-compliance
+  - united-arab-emirates
+  - input-tax
+  - supplier-verification
