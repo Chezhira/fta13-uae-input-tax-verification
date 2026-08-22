@@ -8,13 +8,27 @@ from typing import Any
 from xml.sax.saxutils import escape
 
 
+def _contains_arabic(text: str) -> bool:
+    return any("\u0600" <= char <= "\u06ff" for char in text)
+
+
 def _arabic_display(text: str) -> str:
-    if not any("\u0600" <= char <= "\u06ff" for char in text):
+    if not _contains_arabic(text):
         return text
-    import arabic_reshaper
-    from bidi.algorithm import get_display
+    try:
+        import arabic_reshaper
+        from bidi.algorithm import get_display
+    except ImportError as exc:
+        raise RuntimeError(
+            "Arabic PDF rendering requires arabic-reshaper and python-bidi."
+        ) from exc
 
     return get_display(arabic_reshaper.reshape(text))
+
+
+def _pdf_text(value: Any) -> str:
+    """Escape user-controlled text for ReportLab's XML-like Paragraph markup."""
+    return escape(str(value if value is not None else ""))
 
 
 def build_pdf_report(
@@ -25,6 +39,7 @@ def build_pdf_report(
     ruleset_label: str = "not stated",
     generated_on_utc: str = "not stated",
     reviewer: str = "",
+    exception_available: bool | None = None,
 ) -> bytes:
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_RIGHT
@@ -38,10 +53,24 @@ def build_pdf_report(
     buffer = BytesIO()
     styles = getSampleStyleSheet()
     font_name = "Helvetica"
-    font_path = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
-    if font_path.exists():
-        pdfmetrics.registerFont(TTFont("DejaVuSans", str(font_path)))
-        font_name = "DejaVuSans"
+    font_candidates = (
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+        Path("/usr/local/share/fonts/DejaVuSans.ttf"),
+        Path("C:/Windows/Fonts/arial.ttf"),
+    )
+    font_path = next((path for path in font_candidates if path.exists()), None)
+    extracted_values = [
+        (item or {}).get("original", "")
+        for item in (extracted_document or {}).values()
+        if isinstance(item, dict)
+    ]
+    if any(_contains_arabic(str(value)) for value in extracted_values) and font_path is None:
+        raise RuntimeError(
+            "Arabic PDF rendering requires a Unicode font such as DejaVu Sans."
+        )
+    if font_path is not None:
+        pdfmetrics.registerFont(TTFont("FTA13Unicode", str(font_path)))
+        font_name = "FTA13Unicode"
     body = ParagraphStyle("FTA13Body", parent=styles["BodyText"], fontName=font_name)
     cell = ParagraphStyle(
         "FTA13Cell", parent=body, fontSize=7.2, leading=9, splitLongWords=True
@@ -71,15 +100,15 @@ def build_pdf_report(
         Paragraph("FTA Decision 13 Verification Record", heading),
         Spacer(1, 5 * mm),
         Paragraph(f"Assessment date: {supply_outcome.as_of.isoformat()}", body),
-        Paragraph(f"Ruleset version: {escape(ruleset_label)}", body),
-        Paragraph(f"Generated on (UTC): {escape(generated_on_utc)}", body),
+        Paragraph(f"Ruleset version: {_pdf_text(ruleset_label)}", body),
+        Paragraph(f"Generated on (UTC): {_pdf_text(generated_on_utc)}", body),
         Paragraph(
             "Reviewer (self-declared, not verified by this tool): "
-            f"{escape(reviewer or 'not stated')}",
+            f"{_pdf_text(reviewer or 'not stated')}",
             body,
         ),
-        Paragraph(f"Supplier reference: {supplier_outcome.supplier_id}", body),
-        Paragraph(f"Supply reference: {supply_outcome.supply_id}", body),
+        Paragraph(f"Supplier reference: {_pdf_text(supplier_outcome.supplier_id)}", body),
+        Paragraph(f"Supply reference: {_pdf_text(supply_outcome.supply_id)}", body),
         Spacer(1, 5 * mm),
     ]
     if extracted_document:
@@ -87,13 +116,40 @@ def build_pdf_report(
             item = extracted_document.get(key) or {}
             original = item.get("original", "") if isinstance(item, dict) else ""
             if original:
-                style = right if any("\u0600" <= c <= "\u06ff" for c in original) else body
-                story.append(Paragraph(f"{key.replace('_', ' ').title()}: {_arabic_display(original)}", style))
+                style = right if _contains_arabic(original) else body
+                label = _pdf_text(key.replace("_", " ").title())
+                displayed = _pdf_text(_arabic_display(original))
+                story.append(Paragraph(f"{label}: {displayed}", style))
         story.append(Spacer(1, 5 * mm))
-    for title, outcome in (
-        ("Supplier verification", supplier_outcome),
-        ("Supply verification", supply_outcome),
-    ):
+
+    if exception_available is None:
+        assessment = getattr(supply_outcome, "assessment", None)
+        exception_available = bool(
+            assessment is not None and not assessment.verification_required
+        )
+
+    if exception_available:
+        story.extend(
+            [
+                Paragraph("Supply verification", heading),
+                Paragraph(
+                    "Article 6 exception available. Based on the values entered, "
+                    "this supply is below AED 10,000 and the supplier-spend ceiling "
+                    "has not been exceeded. Continue monitoring trailing and "
+                    "expected supplier totals.",
+                    body,
+                ),
+                Spacer(1, 5 * mm),
+            ]
+        )
+        report_sections = ()
+    else:
+        report_sections = (
+            ("Supplier verification", supplier_outcome),
+            ("Supply verification", supply_outcome),
+        )
+
+    for title, outcome in report_sections:
         story.append(Paragraph(title, heading))
         rows = [
             [
@@ -101,6 +157,7 @@ def build_pdf_report(
                 Paragraph("Article", cell_header),
                 Paragraph("Status", cell_header),
                 Paragraph("Requirement", cell_header),
+                Paragraph("Detail", cell_header),
             ]
         ]
         for result in outcome.results:
@@ -108,13 +165,21 @@ def build_pdf_report(
                 continue
             rows.append(
                 [
-                    Paragraph(escape(result.clause_id), cell),
-                    Paragraph(escape(result.article), cell),
-                    Paragraph(escape(result.verdict.value), cell),
-                    Paragraph(escape(result.requirement), cell),
+                    Paragraph(_pdf_text(result.clause_id), cell),
+                    Paragraph(_pdf_text(result.article), cell),
+                    Paragraph(
+                        _pdf_text(result.verdict.value.replace("_", " ").title()),
+                        cell,
+                    ),
+                    Paragraph(_pdf_text(result.requirement), cell),
+                    Paragraph(_pdf_text(getattr(result, "detail", "")), cell),
                 ]
             )
-        table = Table(rows, colWidths=[23 * mm, 22 * mm, 28 * mm, 103 * mm], repeatRows=1)
+        table = Table(
+            rows,
+            colWidths=[20 * mm, 18 * mm, 22 * mm, 60 * mm, 58 * mm],
+            repeatRows=1,
+        )
         table.setStyle(
             TableStyle(
                 [
