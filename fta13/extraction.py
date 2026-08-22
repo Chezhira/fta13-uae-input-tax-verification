@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Chez Solutions. Authored by Zahidah Murira.
+# MIT License: https://github.com/Chezhira/fta13-uae-input-tax-verification
+
 """Bilingual Arabic/English document extraction with reviewable evidence."""
 
 from __future__ import annotations
