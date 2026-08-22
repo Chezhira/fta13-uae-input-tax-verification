@@ -3,7 +3,37 @@ from types import SimpleNamespace
 
 from pypdf import PdfReader
 
-from fta13.reporting import build_pdf_report
+from fta13.reporting import build_pdf_report, evidence_strength_summary
+
+
+def test_evidence_strength_distinguishes_hash_attestation_and_missing():
+    from datetime import date
+    from decimal import Decimal
+
+    from fta13.engine import evaluate_supplier, evaluate_supply
+    from fta13.models import Evidence, PersonType, Supplier, Supply
+
+    as_of = date(2026, 10, 1)
+    supplier = Supplier(
+        "SUP-1",
+        "Test",
+        PersonType.LEGAL,
+        verified_on=as_of,
+        evidence=[
+            Evidence("certificate_of_incorporation", "uploaded:cert.pdf", as_of, sha256="a" * 64),
+            Evidence("representative_id", "user-confirmed:representative_id", as_of),
+        ],
+    )
+    supply = Supply("INV-1", "SUP-1", as_of, Decimal("20000"), is_goods=True)
+    supplier_outcome = evaluate_supplier(supplier, as_of=as_of)
+    supply_outcome = evaluate_supply(supplier, supply)
+
+    summary = evidence_strength_summary(
+        supplier_outcome, supply_outcome, supplier.evidence, supply.evidence
+    )
+    assert summary["uploaded_and_hashed"] == 1
+    assert summary["self_attested"] == 1
+    assert summary["missing_document_requirements"] >= 1
 
 
 def test_pdf_report_is_valid_and_handles_arabic():

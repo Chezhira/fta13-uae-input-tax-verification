@@ -8,6 +8,7 @@ import json
 import os
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import streamlit as st
 
@@ -21,6 +22,7 @@ from fta13.extraction import (
     batch_identity_rows,
     extract_document,
     merge_extractions,
+    sha256_bytes,
     validate_upload,
 )
 from fta13.models import (
@@ -34,7 +36,8 @@ from fta13.models import (
     Supply,
     Verdict,
 )
-from fta13.reporting import build_pdf_report
+from fta13.portfolio import PortfolioValidationError, parse_ledger_rows, screen_portfolio
+from fta13.reporting import build_pdf_report, evidence_strength_summary
 
 
 AI_EVIDENCE_HINTS = "ai_proposed_evidence"
@@ -146,6 +149,29 @@ def money(value: float) -> Decimal:
 def evidence(kind: str, held: bool, as_of: date) -> list[Evidence]:
     if not held:
         return []
+    matching = [
+        item
+        for item in st.session_state.get("document_evidence_records", [])
+        if kind in item.get("evidence_kinds", [])
+        and item.get("sha256")
+        and item.get("filename")
+        and item.get("sha256")
+        in st.session_state.get("active_document_hashes", set())
+    ]
+    if matching:
+        return [
+            Evidence(
+                kind=kind,
+                reference=f"uploaded:{item['filename']}",
+                obtained_on=as_of,
+                sha256=item["sha256"],
+                note=(
+                    "AI proposed this document type; a person confirmed the "
+                    "document against the requirement."
+                ),
+            )
+            for item in matching
+        ]
     return [
         Evidence(
             kind=kind,
@@ -154,6 +180,16 @@ def evidence(kind: str, held: bool, as_of: date) -> list[Evidence]:
             note="Visitor confirmed that valid evidence is held; document not uploaded.",
         )
     ]
+
+
+def rows_to_csv(rows: list[dict[str, object]]) -> str:
+    if not rows:
+        return ""
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=list(rows[0]))
+    writer.writeheader()
+    writer.writerows(rows)
+    return buffer.getvalue()
 
 
 def evidence_checkbox(label: str, key: str) -> bool:
@@ -351,6 +387,7 @@ def make_markdown_report(
     *,
     reviewer: str,
     generated_on_utc: str,
+    evidence_strength: dict[str, int] | None = None,
 ) -> str:
     lines = [
         "# FTA Decision 13 Verification Record",
@@ -366,6 +403,17 @@ def make_markdown_report(
         "",
     ]
     lines.extend(f"- {item}" for item in supply_outcome.assessment.basis())
+    if evidence_strength is not None:
+        lines.extend(
+            [
+                "",
+                "## Evidence strength",
+                "",
+                f"- Uploaded and hashed (human-confirmed): {evidence_strength['uploaded_and_hashed']}",
+                f"- Confirmed as held, but not uploaded: {evidence_strength['self_attested']}",
+                f"- Missing applicable document requirements: {evidence_strength['missing_document_requirements']}",
+            ]
+        )
     report_sections = (
         (("Supply verification", supply_outcome),)
         if not supply_outcome.assessment.verification_required
@@ -428,6 +476,132 @@ extraction_model = setting("OPENAI_EXTRACTION_MODEL", "gpt-5.6")
 supabase_url = setting("SUPABASE_URL")
 supabase_key = setting("SUPABASE_ANON_KEY")
 
+
+PORTFOLIO_TEMPLATE = rows_to_csv(
+    [
+        {
+            "supplier_reference": "SUP-001",
+            "supply_reference": "INV-1001",
+            "supply_date": "2026-07-15",
+            "amount_excluding_vat": "8500.00",
+            "input_vat": "425.00",
+            "expected_next_12m": "120000.00",
+            "last_verified_on": "2026-01-20",
+        },
+        {
+            "supplier_reference": "SUP-001",
+            "supply_reference": "INV-1002",
+            "supply_date": "2026-08-15",
+            "amount_excluding_vat": "9500.00",
+            "input_vat": "475.00",
+            "expected_next_12m": "120000.00",
+            "last_verified_on": "2026-01-20",
+        },
+    ]
+)
+
+with st.expander("Portfolio screening from an AP ledger", expanded=True):
+    st.caption(
+        "Upload a CSV to rank suppliers for review before opening an individual "
+        "assessment. Processing is session-only: the ledger is not saved by this "
+        "screen. Amounts must be in AED and dates must use YYYY-MM-DD."
+    )
+    st.download_button(
+        "Download ledger template (.csv)",
+        data=PORTFOLIO_TEMPLATE,
+        file_name="fta13_portfolio_template.csv",
+        mime="text/csv",
+        disabled=False,
+    )
+    ledger_upload = st.file_uploader(
+        "AP ledger CSV",
+        type=["csv"],
+        key="portfolio_ledger_upload",
+        help="Use transaction-level rows. Supplier forecasts and verification dates may repeat.",
+    )
+    portfolio_rows: list[dict[str, object]] = []
+    if ledger_upload is not None:
+        try:
+            if ledger_upload.size > 10 * 1024 * 1024:
+                raise PortfolioValidationError("The ledger must be 10 MB or smaller.")
+            decoded = ledger_upload.getvalue().decode("utf-8-sig")
+            reader = csv.DictReader(io.StringIO(decoded))
+            headers = reader.fieldnames or []
+            raw_rows = list(reader)
+            if not headers:
+                raise PortfolioValidationError("The CSV has no header row.")
+            st.markdown("**Map your columns**")
+            required_fields = {
+                "supplier_reference": "Supplier reference",
+                "supply_reference": "Supply / invoice reference",
+                "supply_date": "Supply date",
+                "amount_excluding_vat": "Amount excluding VAT (AED)",
+            }
+            optional_fields = {
+                "input_vat": "Input VAT (optional)",
+                "expected_next_12m": "Expected next 12 months (optional)",
+                "last_verified_on": "Last verified on (optional)",
+            }
+            column_map: dict[str, str | None] = {}
+            map_columns = st.columns(2)
+            for index, (field, label) in enumerate(required_fields.items()):
+                default_index = headers.index(field) if field in headers else 0
+                column_map[field] = map_columns[index % 2].selectbox(
+                    label,
+                    headers,
+                    index=default_index,
+                    key=f"portfolio_map_{field}",
+                )
+            choices = ["Not provided", *headers]
+            for index, (field, label) in enumerate(optional_fields.items()):
+                default_index = choices.index(field) if field in headers else 0
+                selected = map_columns[index % 2].selectbox(
+                    label,
+                    choices,
+                    index=default_index,
+                    key=f"portfolio_map_{field}",
+                )
+                column_map[field] = None if selected == "Not provided" else selected
+            portfolio_as_of = st.date_input(
+                "Portfolio as-of date",
+                value=datetime.now(ZoneInfo("Asia/Dubai")).date(),
+                key="portfolio_as_of_date",
+            )
+            if st.button("Screen supplier portfolio", width="stretch"):
+                transactions = parse_ledger_rows(raw_rows, column_map)
+                results = screen_portfolio(transactions, as_of=portfolio_as_of)
+                st.session_state["portfolio_screen_rows"] = [
+                    item.as_row() for item in results
+                ]
+        except (UnicodeDecodeError, csv.Error, PortfolioValidationError) as exc:
+            st.error(f"Portfolio screening could not run: {exc}")
+    portfolio_rows = st.session_state.get("portfolio_screen_rows", [])
+    if portfolio_rows:
+        enhanced = sum(row["enhanced_checks_required"] is True for row in portfolio_rows)
+        full = sum(
+            str(row["priority"]).startswith(("1", "2")) for row in portfolio_rows
+        )
+        exposure = sum(
+            (Decimal(str(row["input_vat_screening_exposure_aed"])) for row in portfolio_rows),
+            Decimal("0"),
+        )
+        p1, p2, p3 = st.columns(3)
+        p1.metric("Suppliers screened", len(portfolio_rows))
+        p2.metric("Full / enhanced priority", full)
+        p3.metric("Input VAT screening exposure", f"AED {exposure:,.2f}")
+        if enhanced:
+            st.warning(f"{enhanced} supplier(s) trigger the AED 375,000 enhanced-check threshold.")
+        st.dataframe(portfolio_rows, hide_index=True, width="stretch")
+    portfolio_csv = rows_to_csv(portfolio_rows)
+    st.download_button(
+        "Download ranked screening register (.csv)",
+        data=portfolio_csv,
+        file_name="fta13_portfolio_screening.csv",
+        mime="text/csv",
+        disabled=not bool(portfolio_rows),
+    )
+
+
 st.subheader("Document assistant | مساعد المستندات")
 st.caption(
     "Upload Arabic, English or bilingual documents for one supplier and one "
@@ -440,6 +614,9 @@ uploaded_documents = st.file_uploader(
     accept_multiple_files=True,
     help="Up to five documents, maximum 5 MB each.",
 )
+st.session_state["active_document_hashes"] = {
+    sha256_bytes(uploaded.getvalue()) for uploaded in (uploaded_documents or [])
+}
 language_label = st.selectbox(
     "Document language",
     ["Detect automatically", "Arabic | العربية", "English", "Arabic + English"],
@@ -489,6 +666,14 @@ if st.button("Read documents in Arabic and English", disabled=extract_disabled):
                     extractions.append(result)
                 st.session_state["document_extractions"] = [
                     item.model_dump(mode="json") for item in extractions
+                ]
+                st.session_state["document_evidence_records"] = [
+                    {
+                        "filename": uploaded.name,
+                        "sha256": sha256_bytes(uploaded.getvalue()),
+                        "evidence_kinds": item.evidence_kinds,
+                    }
+                    for uploaded, item in zip(uploaded_documents, extractions)
                 ]
                 filenames = [uploaded.name for uploaded in uploaded_documents]
                 st.session_state["batch_identity_rows"] = batch_identity_rows(
@@ -1015,11 +1200,30 @@ with tab_report:
     )
 
     generated_on_utc = datetime.now(timezone.utc).isoformat()
+    evidence_strength = evidence_strength_summary(
+        supplier_outcome,
+        supply_outcome,
+        supplier.evidence,
+        supply.evidence,
+    )
+    st.subheader("Evidence strength")
+    e1, e2, e3 = st.columns(3)
+    e1.metric("Uploaded and hashed", evidence_strength["uploaded_and_hashed"])
+    e2.metric("Self-attested as held", evidence_strength["self_attested"])
+    e3.metric(
+        "Missing document requirements",
+        evidence_strength["missing_document_requirements"],
+    )
+    st.caption(
+        "Uploaded evidence counts only after a person confirms the matching "
+        "checkbox. AI suggestions alone never satisfy a requirement."
+    )
     report = make_markdown_report(
         supplier_outcome,
         supply_outcome,
         reviewer=reviewer,
         generated_on_utc=generated_on_utc,
+        evidence_strength=evidence_strength,
     )
     register_csv = make_register_csv(supplier_outcome, supply_outcome)
     audit_json = json.dumps(
@@ -1030,6 +1234,7 @@ with tab_report:
             "generated_on_utc": generated_on_utc,
             "reviewer": reviewer or "not stated",
             "reviewer_identity_verified": False,
+            "evidence_strength": evidence_strength,
             "scope_limitation": (
                 "Decision 13 verification only; not an overall input-tax "
                 "recoverability conclusion."
@@ -1049,6 +1254,7 @@ with tab_report:
         generated_on_utc=generated_on_utc,
         reviewer=reviewer,
         exception_available=exception_available,
+        evidence_strength=evidence_strength,
     )
 
     exports_locked = merged_extraction is not None and not extraction_reviewed

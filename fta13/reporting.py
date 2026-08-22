@@ -7,6 +7,38 @@ from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape
 
+from .models import CheckKind, Verdict
+
+
+def evidence_strength_summary(
+    supplier_outcome: Any,
+    supply_outcome: Any,
+    supplier_evidence: list[Any],
+    supply_evidence: list[Any],
+) -> dict[str, int]:
+    """Summarise provenance without treating an AI match as human confirmation."""
+    exception_available = not supply_outcome.assessment.verification_required
+    evidence_pool = supply_evidence if exception_available else supplier_evidence + supply_evidence
+    outcomes = (supply_outcome,) if exception_available else (supplier_outcome, supply_outcome)
+    uploaded = {(item.kind, item.sha256) for item in evidence_pool if item.sha256}
+    attested = {
+        (item.kind, item.reference)
+        for item in evidence_pool
+        if not item.sha256
+    }
+    missing = sum(
+        1
+        for outcome in outcomes
+        for result in outcome.results
+        if result.kind is CheckKind.DOCUMENT
+        and result.verdict in (Verdict.MISSING, Verdict.FAILED)
+    )
+    return {
+        "uploaded_and_hashed": len(uploaded),
+        "self_attested": len(attested),
+        "missing_document_requirements": missing,
+    }
+
 
 def _contains_arabic(text: str) -> bool:
     return any("\u0600" <= char <= "\u06ff" for char in text)
@@ -40,6 +72,7 @@ def build_pdf_report(
     generated_on_utc: str = "not stated",
     reviewer: str = "",
     exception_available: bool | None = None,
+    evidence_strength: dict[str, int] | None = None,
 ) -> bytes:
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_RIGHT
@@ -121,6 +154,29 @@ def build_pdf_report(
                 displayed = _pdf_text(_arabic_display(original))
                 story.append(Paragraph(f"{label}: {displayed}", style))
         story.append(Spacer(1, 5 * mm))
+
+    if evidence_strength is not None:
+        story.extend(
+            [
+                Paragraph("Evidence strength", heading),
+                Paragraph(
+                    "Uploaded and hashed (human-confirmed): "
+                    f"{int(evidence_strength.get('uploaded_and_hashed', 0))}",
+                    body,
+                ),
+                Paragraph(
+                    "Confirmed as held, but not uploaded: "
+                    f"{int(evidence_strength.get('self_attested', 0))}",
+                    body,
+                ),
+                Paragraph(
+                    "Missing applicable document requirements: "
+                    f"{int(evidence_strength.get('missing_document_requirements', 0))}",
+                    body,
+                ),
+                Spacer(1, 5 * mm),
+            ]
+        )
 
     if exception_available is None:
         assessment = getattr(supply_outcome, "assessment", None)

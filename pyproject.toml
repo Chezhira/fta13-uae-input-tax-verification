@@ -1,6 +1,6 @@
 [project]
 name = "fta13"
-version = "0.1.0"
+version = "0.2.0"
 description = "Deterministic verification engine for UAE FTA Decision No. 13 of 2026 (input tax due diligence)"
 requires-python = ">=3.10"
 dependencies = []

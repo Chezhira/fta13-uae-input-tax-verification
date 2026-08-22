@@ -44,14 +44,33 @@ def test_every_report_download_is_gated_by_review_confirmation():
         and node.func.attr == "download_button"
     ]
 
-    assert len(download_calls) == 3
-    for call in download_calls:
+    report_downloads = [
+        call
+        for call in download_calls
+        if call.args
+        and isinstance(call.args[0], ast.Constant)
+        and str(call.args[0].value).startswith("Download ")
+        and any(
+            word in str(call.args[0].value)
+            for word in ("professional verification", "verification register", "machine-readable")
+        )
+    ]
+    assert len(report_downloads) == 3
+    for call in report_downloads:
         disabled = next(
             (keyword.value for keyword in call.keywords if keyword.arg == "disabled"),
             None,
         )
         assert isinstance(disabled, ast.Name)
         assert disabled.id == "exports_locked"
+
+
+def test_uploaded_evidence_requires_human_checkbox_and_carries_hash():
+    source = ast.get_source_segment(APP_SOURCE, _function("evidence")) or ""
+    assert "if not held" in source
+    assert "document_evidence_records" in source
+    assert "active_document_hashes" in source
+    assert "sha256=item[\"sha256\"]" in source
 
 
 def test_extraction_targets_use_session_defaults_without_widget_values():

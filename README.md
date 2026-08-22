@@ -2,10 +2,10 @@
 
 # FTA13 Verification Engine
 
-**Document-assisted supplier and supply verification for UAE FTA Decision No. 13 of 2026**
+**Portfolio screening and document-assisted verification for UAE FTA Decision No. 13 of 2026**
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB)](https://www.python.org/)
-[![CI](https://img.shields.io/badge/CI-43%20tests%20passing-2EA043)](.github/workflows/ci.yml)
+[![CI](https://img.shields.io/badge/CI-49%20tests%20passing-2EA043)](.github/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-90%25%2B-2EA043)](.github/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-F2CC60)](LICENSE)
 
@@ -21,16 +21,25 @@ FTA13 turns the verification measures in UAE Federal Tax Authority Decision No. 
 
 Users can:
 
+- upload a transaction-level AP ledger and rank an entire supplier portfolio;
+- quantify input VAT in the population requiring review (a screening measure,
+  not a recoverability conclusion);
 - upload Arabic, English, or bilingual supplier documents;
 - use AI to propose invoice and supplier fields with page-level source quotations;
 - review and correct every proposed field before relying on it;
 - evaluate the AED 10,000, AED 100,000, and AED 375,000 thresholds;
 - identify the supplier and supply checks applicable to the transaction;
 - record documentary evidence and named human conclusions;
+- distinguish uploaded-and-hashed evidence from documents only confirmed as held;
 - download a professional PDF report, CSV register, and JSON audit record; and
 - optionally sign in to save an assessment and its documents privately.
 
 Assessment, document reading, and report downloads do not require an account. Sign-in appears only under **Save for later**.
+
+Portfolio screening is session-only and does not save the uploaded ledger. The
+CSV mapper requires supplier reference, supply reference, supply date, and the
+amount excluding VAT. Input VAT, expected next-12-month spend, and last
+verification date are optional. Dates use `YYYY-MM-DD` and amounts use AED.
 
 Each assessment accepts up to five supporting documents of no more than 5 MB
 each, and they must relate to one supplier and one supply/invoice. The app
@@ -51,11 +60,11 @@ A small invoice is not automatically exempt. For example, an AED 2,400 invoice c
 
 ```mermaid
 flowchart TD
-    A["Arabic or English documents"] --> B["AI field proposals and source quotes"]
-    B --> C["Human review and correction"]
+    A["AP ledger or supplier documents"] --> B["Mapped facts and AI proposals"]
+    B --> C["Human review and confirmation"]
     C --> D["Deterministic Decision 13 engine"]
-    D --> E["PDF, CSV and JSON records"]
-    E --> F["Optional private save"]
+    D --> E["Ranked portfolio or verification records"]
+    E --> F["Downloads and optional private save"]
 ```
 
 The control boundary is intentional:
@@ -63,6 +72,8 @@ The control boundary is intentional:
 - AI reads documents and proposes structured facts. It does not decide compliance.
 - AI evidence matches appear only as hints; a person must still confirm each
   blocking document-evidence checkbox.
+- A confirmed uploaded document is content-addressed with SHA-256; a checkbox
+  without a matching upload is clearly reported as self-attested.
 - A person reviews AI-populated fields and signs judgment-based conclusions.
 - The deterministic engine applies thresholds and clause logic reproducibly.
 - The report records the result and supporting gaps; it does not determine overall input-tax recoverability.
@@ -71,6 +82,7 @@ The control boundary is intentional:
 
 | Output | Intended use |
 |---|---|
+| Ranked portfolio CSV | Supplier prioritisation, threshold monitoring, re-verification queue, and screening exposure |
 | PDF verification report | Readable review and sign-off record, with Arabic text support |
 | CSV verification register | Finance, tax, or audit register |
 | JSON audit record | System integration and reproducible storage |
@@ -116,7 +128,7 @@ Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`:
 ```toml
 OPENAI_API_KEY = ""
 OPENAI_EXTRACTION_MODEL = "gpt-5.6"
-FTA13_RULESET = "fta13 0.1.0"
+FTA13_RULESET = "fta13 0.2.0"
 SUPABASE_URL = ""
 SUPABASE_ANON_KEY = ""
 ```
@@ -132,6 +144,7 @@ For private saving:
 | Path | Purpose |
 |---|---|
 | `fta13/thresholds.py` | Exact threshold and rolling-period calculations |
+| `fta13/portfolio.py` | AP-ledger validation, grouping, ranking, and exposure screening |
 | `fta13/clauses.py` | Decision requirements expressed as data |
 | `fta13/engine.py` | Deterministic supplier and supply evaluation |
 | `fta13/extraction.py` | Arabic and English document extraction schema |
@@ -143,6 +156,8 @@ For private saving:
 | `supabase/migrations/` | Database, row-level security, and private storage setup |
 | `tests/` | Boundary, extraction, reporting, and control tests |
 | `docs/legal-sources/` | Authoritative Arabic Decision and reconciliation record |
+| `examples/fta13_synthetic_portfolio_800.csv` | Upload-ready synthetic launch dataset (800 suppliers) |
+| `examples/fta13_synthetic_portfolio_800.xlsx` | Formatted synthetic dataset, dictionary, and validation checks |
 
 ## Test the project
 
@@ -172,6 +187,7 @@ If any discrepancy arises, the Arabic text prevails. This project evaluates comp
 - Extracted legal names, TRNs, invoice references and source fields may appear in
   the generated PDF.
 - Anonymous documents are not persisted by the app.
+- Portfolio ledger processing is session-only and is not written to Supabase.
 - Saving requires authentication and explicit user action.
 - Supabase row-level security restricts database rows and private storage paths to their owner.
 - The deterministic engine, not the AI model, applies the Decision 13 rules.
