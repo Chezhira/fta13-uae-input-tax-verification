@@ -5,7 +5,7 @@
 **Document-assisted supplier and supply verification for UAE FTA Decision No. 13 of 2026**
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB)](https://www.python.org/)
-[![CI](https://img.shields.io/badge/CI-37%20tests%20passing-2EA043)](.github/workflows/ci.yml)
+[![CI](https://img.shields.io/badge/CI-41%20tests%20passing-2EA043)](.github/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-90%25%2B-2EA043)](.github/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-F2CC60)](LICENSE)
 
@@ -58,6 +58,8 @@ flowchart TD
 The control boundary is intentional:
 
 - AI reads documents and proposes structured facts. It does not decide compliance.
+- AI evidence matches appear only as hints; a person must still confirm each
+  blocking document-evidence checkbox.
 - A person reviews AI-populated fields and signs judgment-based conclusions.
 - The deterministic engine applies thresholds and clause logic reproducibly.
 - The report records the result and supporting gaps; it does not determine overall input-tax recoverability.
@@ -98,6 +100,12 @@ streamlit run app.py
 
 The manual workflow works without external credentials. AI document extraction requires an OpenAI API key. Private saving additionally requires Supabase configuration.
 
+When AI extraction is used, uploaded supplier documents are transmitted to
+OpenAI for processing after the user gives explicit authorisation. Requests use
+`store=False`, but users should still apply their organisation's privacy,
+confidentiality, retention, and cross-border data-transfer requirements before
+uploading documents.
+
 ## Configuration
 
 Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`:
@@ -105,6 +113,7 @@ Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`:
 ```toml
 OPENAI_API_KEY = ""
 OPENAI_EXTRACTION_MODEL = "gpt-5.6"
+FTA13_RULESET = "fta13 0.1.0"
 SUPABASE_URL = ""
 SUPABASE_ANON_KEY = ""
 ```

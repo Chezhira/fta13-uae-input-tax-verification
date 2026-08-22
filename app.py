@@ -6,11 +6,13 @@ import csv
 import io
 import json
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import streamlit as st
 
+from fta13 import __version__ as ENGINE_VERSION
+from fta13.clauses import ALL_CLAUSES
 from fta13.engine import VerificationOutcome, evaluate_supplier, evaluate_supply
 from fta13.extraction import (
     DocumentExtraction,
@@ -21,6 +23,7 @@ from fta13.extraction import (
     validate_upload,
 )
 from fta13.models import (
+    CheckKind,
     Evidence,
     HumanConclusion,
     PaymentMethod,
@@ -31,6 +34,21 @@ from fta13.models import (
     Verdict,
 )
 from fta13.reporting import build_pdf_report
+
+
+AI_EVIDENCE_HINTS = "ai_proposed_evidence"
+
+EVIDENCE_KEYS = {
+    "certificate_of_incorporation": "evidence_incorporation",
+    "representative_id": "evidence_representative_id",
+    "passport": "evidence_passport",
+    "meeting_record": "evidence_meeting",
+    "place_of_business_check": "evidence_business_place",
+    "bank_confirmation": "evidence_bank",
+    "cash_payment_rationale": "evidence_cash_reason",
+    "origin_document": "evidence_origin",
+    "title_document": "evidence_title",
+}
 
 
 st.set_page_config(
@@ -58,6 +76,22 @@ def setting(name: str, default: str = "") -> str:
         return os.getenv(name, default)
 
 
+RULESET_LABEL = setting("FTA13_RULESET", f"fta13 {ENGINE_VERSION}")
+
+SESSION_DEFAULTS = {
+    "assessment_date_input": date(2026, 10, 1),
+    "supplier_ref_input": "SUPPLIER-001",
+    "supply_ref_input": "SUPPLY-001",
+    "country_input": "AE",
+    "invoice_value_input": 2400.0,
+    "payment_method_input": "Electronic",
+    "is_goods_input": True,
+    "offshore_input": False,
+}
+for session_key, default_value in SESSION_DEFAULTS.items():
+    st.session_state.setdefault(session_key, default_value)
+
+
 def apply_extraction(item: DocumentExtraction) -> None:
     """Prefill only supported values; the visible widgets remain human-editable."""
     mapping = {
@@ -71,6 +105,9 @@ def apply_extraction(item: DocumentExtraction) -> None:
             st.session_state[key] = value
     amount = item.decimal_value()
     if amount is not None and amount >= 0:
+        # Streamlit number_input requires int/float widget state. The value is
+        # converted back through Decimal(str(value)) in money(), preserving the
+        # displayed two-decimal currency amount without binary-float arithmetic.
         st.session_state["invoice_value_input"] = float(amount)
     extracted_date = item.invoice_date_value()
     if extracted_date and extracted_date >= date(2026, 10, 1):
@@ -80,6 +117,10 @@ def apply_extraction(item: DocumentExtraction) -> None:
         st.session_state["payment_method_input"] = "Cash"
     elif method:
         st.session_state["payment_method_input"] = "Electronic"
+    payee_country = item.payee_country.normalized.strip().upper()
+    supplier_country = item.country_of_incorporation.normalized.strip().upper()
+    if payee_country and supplier_country:
+        st.session_state["offshore_input"] = payee_country != supplier_country
     for key, value in {
         "is_goods_input": item.is_goods,
         "third_party_input": item.third_party_in_payment,
@@ -87,20 +128,14 @@ def apply_extraction(item: DocumentExtraction) -> None:
     }.items():
         if value is not None:
             st.session_state[key] = value
-    evidence_keys = {
-        "certificate_of_incorporation": "evidence_incorporation",
-        "representative_id": "evidence_representative_id",
-        "passport": "evidence_passport",
-        "meeting_record": "evidence_meeting",
-        "place_of_business_check": "evidence_business_place",
-        "bank_confirmation": "evidence_bank",
-        "cash_payment_rationale": "evidence_cash_reason",
-        "origin_document": "evidence_origin",
-        "title_document": "evidence_title",
-    }
-    for evidence_kind in item.evidence_kinds:
-        if evidence_kind in evidence_keys:
-            st.session_state[evidence_keys[evidence_kind]] = True
+    # Extraction proposes evidence; it never asserts a blocking DOCUMENT clause.
+    st.session_state[AI_EVIDENCE_HINTS] = sorted(
+        EVIDENCE_KEYS[kind]
+        for kind in item.evidence_kinds
+        if kind in EVIDENCE_KEYS
+    )
+    # A newly extracted document set always requires a fresh human review.
+    st.session_state["ai_extraction_reviewed"] = False
 
 
 def money(value: float) -> Decimal:
@@ -118,6 +153,14 @@ def evidence(kind: str, held: bool, as_of: date) -> list[Evidence]:
             note="Visitor confirmed that valid evidence is held; document not uploaded.",
         )
     ]
+
+
+def evidence_checkbox(label: str, key: str) -> bool:
+    """Surface an AI evidence hint without answering the control question."""
+    proposed = key in st.session_state.get(AI_EVIDENCE_HINTS, [])
+    if proposed:
+        label = f"{label}  ·  AI found a matching document. Confirm it yourself."
+    return st.checkbox(label, key=key)
 
 
 def conclusion(
@@ -146,6 +189,11 @@ def collect_conclusion(
     *,
     help_text: str = "",
 ) -> HumanConclusion | None:
+    clause = ALL_CLAUSES.get(clause_id)
+    if clause is None:
+        raise KeyError(f"unknown clause {clause_id}")
+    if clause.kind is not CheckKind.JUDGMENT:
+        raise ValueError(f"{clause_id} is not a human-judgment clause")
     status = st.selectbox(
         label,
         ["Awaiting review", "Satisfied", "Not satisfied"],
@@ -159,6 +207,17 @@ def collect_conclusion(
         height=80,
     )
     if status == "Awaiting review":
+        return None
+    if not reviewer.strip():
+        st.error(
+            f"Reviewer name is required before the {clause_id} conclusion can "
+            "be recorded. Enter it in the Scenario tab."
+        )
+        return None
+    if not rationale.strip():
+        st.error(
+            f"A rationale is required before the {clause_id} conclusion can be recorded."
+        )
         return None
     return conclusion(
         clause_id,
@@ -184,8 +243,20 @@ def result_table(outcome: VerificationOutcome) -> list[dict]:
     ]
 
 
-def render_outcome(title: str, outcome: VerificationOutcome) -> None:
+def render_outcome(
+    title: str,
+    outcome: VerificationOutcome,
+    *,
+    exception_available: bool = False,
+) -> None:
     st.subheader(title)
+    if exception_available and outcome.supply_id is None:
+        st.success(
+            "Supplier verification is not required for this supply because the "
+            "Article 6 exception is available. Continue monitoring trailing and "
+            "expected supplier totals."
+        )
+        return
     if not outcome.assessment.verification_required and outcome.supply_id:
         st.success(
             "The Article 6 exception is available for this scenario. Continue "
@@ -276,11 +347,17 @@ def make_register_csv(
 def make_markdown_report(
     supplier_outcome: VerificationOutcome,
     supply_outcome: VerificationOutcome,
+    *,
+    reviewer: str,
+    generated_on_utc: str,
 ) -> str:
     lines = [
         "# FTA Decision 13 Verification Record",
         "",
         f"Assessment date: {supply_outcome.as_of.isoformat()}",
+        f"Ruleset version: {RULESET_LABEL}",
+        f"Generated on (UTC): {generated_on_utc}",
+        f"Reviewer (self-declared, not verified by this tool): {reviewer or 'not stated'}",
         f"Supplier reference: {supplier_outcome.supplier_id}",
         f"Supply reference: {supply_outcome.supply_id}",
         "",
@@ -481,19 +558,16 @@ with tab_scenario:
     with c1:
         assessment_date = st.date_input(
             "Supply / assessment date",
-            value=date(2026, 10, 1),
             min_value=date(2026, 10, 1),
             key="assessment_date_input",
         )
         supplier_ref = st.text_input(
             "Supplier reference",
-            value="SUPPLIER-001",
             help="Use an internal reference, not a legal name.",
             key="supplier_ref_input",
         )
         supply_ref = st.text_input(
             "Supply reference",
-            value="SUPPLY-001",
             help="Use an internal invoice or transaction reference.",
             key="supply_ref_input",
         )
@@ -502,7 +576,6 @@ with tab_scenario:
         )
         country = st.text_input(
             "Country of incorporation (ISO-2)",
-            value="AE",
             max_chars=2,
             key="country_input",
         ).upper()
@@ -510,7 +583,6 @@ with tab_scenario:
         invoice_value = st.number_input(
             "This supply, excluding VAT (AED)",
             min_value=0.0,
-            value=2400.0,
             step=100.0,
             key="invoice_value_input",
         )
@@ -553,7 +625,7 @@ with tab_scenario:
             else PersonType.NATURAL
         ),
         country_of_incorporation=country or "AE",
-        verified_on=assessment_date if complete_now else verified_on,
+        verified_on=verified_on,
         expected_forward_12m=money(forward_spend),
     )
     threshold_supply = Supply(
@@ -599,7 +671,8 @@ with tab_scenario:
 with tab_supplier:
     st.header("Supplier verification: Article 3")
     st.caption(
-        "Confirm whether evidence is held. Documents stay with you and are not uploaded."
+        "Confirm whether valid evidence is held. AI suggestions do not tick these "
+        "boxes; review each supporting document yourself."
     )
     supplier_evidence: list[Evidence] = []
     supplier_conclusions: list[HumanConclusion] = []
@@ -607,7 +680,7 @@ with tab_supplier:
     if person_type_label == "Legal person":
         supplier_evidence += evidence(
             "certificate_of_incorporation",
-            st.checkbox(
+            evidence_checkbox(
                 "Incorporation verified through an official database or valid certificate",
                 key="evidence_incorporation",
             ),
@@ -623,7 +696,7 @@ with tab_supplier:
             supplier_conclusions.append(item)
         supplier_evidence += evidence(
             "representative_id",
-            st.checkbox(
+            evidence_checkbox(
                 "Valid ID held for the authorised director, agent or employee",
                 key="evidence_representative_id",
             ),
@@ -632,7 +705,7 @@ with tab_supplier:
     else:
         supplier_evidence += evidence(
             "passport",
-            st.checkbox(
+            evidence_checkbox(
                 "Valid proof of identity held for the natural-person supplier",
                 key="evidence_passport",
             ),
@@ -640,7 +713,7 @@ with tab_supplier:
         )
         supplier_evidence += evidence(
             "meeting_record",
-            st.checkbox(
+            evidence_checkbox(
                 "In-person or virtual pre-supply meeting documented",
                 key="evidence_meeting",
             ),
@@ -649,7 +722,7 @@ with tab_supplier:
 
     supplier_evidence += evidence(
         "place_of_business_check",
-        st.checkbox(
+        evidence_checkbox(
             "Actual place of business verified electronically or by visit",
             key="evidence_business_place",
         ),
@@ -701,7 +774,7 @@ with tab_supplier:
         st.subheader("Enhanced checks: Article 3(4)")
         supplier_evidence += evidence(
             "bank_confirmation",
-            st.checkbox("Written UAE bank confirmation is held", key="evidence_bank"),
+            evidence_checkbox("Written UAE bank confirmation is held", "evidence_bank"),
             assessment_date,
         )
         item = collect_conclusion(
@@ -731,10 +804,12 @@ with tab_supply:
         third_party = st.checkbox(
             "Third party involved in payment", key="third_party_input"
         )
-        offshore = st.checkbox("Payment account outside incorporation country")
+        offshore = st.checkbox(
+            "Payment account outside incorporation country", key="offshore_input"
+        )
     with sc2:
         is_goods = st.checkbox(
-            "This is a supply of goods", value=True, key="is_goods_input"
+            "This is a supply of goods", key="is_goods_input"
         )
         intermediary = st.checkbox(
             "Supplier acts as an intermediary", key="intermediary_input"
@@ -779,7 +854,7 @@ with tab_supply:
     if payment_label == "Cash":
         supply_evidence += evidence(
             "cash_payment_rationale",
-            st.checkbox(
+            evidence_checkbox(
                 "Documented commercial reason for cash payment is held",
                 key="evidence_cash_reason",
             ),
@@ -796,14 +871,14 @@ with tab_supply:
     if is_goods:
         supply_evidence += evidence(
             "origin_document",
-            st.checkbox(
+            evidence_checkbox(
                 "Authenticity and origin evidence is held", key="evidence_origin"
             ),
             assessment_date,
         )
         supply_evidence += evidence(
             "title_document",
-            st.checkbox(
+            evidence_checkbox(
                 "Supplier ownership or right-to-dispose evidence is held",
                 key="evidence_title",
             ),
@@ -832,7 +907,7 @@ supplier = Supplier(
         else PersonType.NATURAL
     ),
     country_of_incorporation=country or "AE",
-    verified_on=assessment_date if complete_now else verified_on,
+    verified_on=verified_on,
     evidence=supplier_evidence,
     conclusions=supplier_conclusions,
     risk_events=supplier_risk_events,
@@ -863,21 +938,49 @@ supplier_outcome = evaluate_supplier(
     as_of=assessment_date,
     prior_supplies=history,
 )
+if complete_now:
+    # Article 5(1) is the record created by a completed Article 3 assessment,
+    # so it cannot be used to block that same assessment from being recorded.
+    article_3_gaps = [
+        gap for gap in supplier_outcome.blocking_gaps if gap.clause_id != "5.1"
+    ]
+    if not article_3_gaps:
+        supplier.verified_on = assessment_date
+        st.session_state.pop("complete_now_blocked", None)
+        supplier_outcome = evaluate_supplier(
+            supplier,
+            as_of=assessment_date,
+            prior_supplies=history,
+        )
+    else:
+        st.session_state["complete_now_blocked"] = len(article_3_gaps)
+else:
+    st.session_state.pop("complete_now_blocked", None)
 supply_outcome = evaluate_supply(
     supplier,
     supply,
     prior_supplies=history,
 )
+exception_available = not supply_outcome.assessment.verification_required
 
 with tab_supplier:
-    render_outcome("Supplier result", supplier_outcome)
+    blocked = st.session_state.get("complete_now_blocked")
+    if blocked:
+        st.warning(
+            "This assessment cannot yet stand as the supplier verification: "
+            f"{blocked} blocking gap(s) remain in the Article 3 checks."
+        )
+    render_outcome(
+        "Supplier result",
+        supplier_outcome,
+        exception_available=exception_available,
+    )
 
 with tab_supply:
     render_outcome("Supply result", supply_outcome)
 
 with tab_report:
     st.header("Verification record")
-    exception_available = not supply_outcome.assessment.verification_required
     overall_complete = exception_available or (
         supplier_outcome.decision_13_verification_complete
         and supply_outcome.decision_13_verification_complete
@@ -908,13 +1011,22 @@ with tab_report:
         else ("Complete" if overall_complete else "Open"),
     )
 
-    report = make_markdown_report(supplier_outcome, supply_outcome)
+    generated_on_utc = datetime.now(timezone.utc).isoformat()
+    report = make_markdown_report(
+        supplier_outcome,
+        supply_outcome,
+        reviewer=reviewer,
+        generated_on_utc=generated_on_utc,
+    )
     register_csv = make_register_csv(supplier_outcome, supply_outcome)
     audit_json = json.dumps(
         {
             "supplier": supplier_outcome.register_row(),
             "supply": supply_outcome.register_row(),
-            "generated_on": date.today().isoformat(),
+            "ruleset_version": RULESET_LABEL,
+            "generated_on_utc": generated_on_utc,
+            "reviewer": reviewer or "not stated",
+            "reviewer_identity_verified": False,
             "scope_limitation": (
                 "Decision 13 verification only; not an overall input-tax "
                 "recoverability conclusion."
@@ -930,7 +1042,17 @@ with tab_report:
         extracted_document=(
             merged_extraction.model_dump(mode="json") if merged_extraction else None
         ),
+        ruleset_label=RULESET_LABEL,
+        generated_on_utc=generated_on_utc,
+        reviewer=reviewer,
     )
+
+    exports_locked = merged_extraction is not None and not extraction_reviewed
+    if exports_locked:
+        st.error(
+            "Confirm that you have reviewed the AI-populated fields before "
+            "exporting a verification record."
+        )
 
     st.download_button(
         "Download professional verification report (.pdf)",
@@ -938,6 +1060,7 @@ with tab_report:
         file_name=f"fta13_verification_{supply.supply_id}.pdf",
         mime="application/pdf",
         width="stretch",
+        disabled=exports_locked,
     )
     dc1, dc2 = st.columns(2)
     with dc1:
@@ -947,6 +1070,7 @@ with tab_report:
             file_name=f"fta13_register_{supply.supply_id}.csv",
             mime="text/csv",
             width="stretch",
+            disabled=exports_locked,
         )
     with dc2:
         st.download_button(
@@ -955,6 +1079,7 @@ with tab_report:
             file_name=f"fta13_record_{supply.supply_id}.json",
             mime="application/json",
             width="stretch",
+            disabled=exports_locked,
         )
     with st.expander("Save for later (optional)"):
         st.caption(
