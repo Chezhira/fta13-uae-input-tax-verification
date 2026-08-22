@@ -655,6 +655,12 @@ with st.expander("Portfolio screening from an AP ledger", expanded=True):
         "assessment. Processing is session-only: the ledger is not saved by this "
         "screen. Amounts must be in AED and dates must use YYYY-MM-DD."
     )
+    st.info(
+        "Privacy-first option: supplier names and TRNs are optional. You can "
+        "screen the portfolio using only internal supplier references, invoice "
+        "references, dates and amounts. Add names or TRNs only when you want to "
+        "link a ranked supplier to uploaded documents."
+    )
     st.download_button(
         "Download ledger template (.csv)",
         data=PORTFOLIO_TEMPLATE,
