@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
+import re
 from typing import Iterable, Mapping
 
 from .models import Supply
@@ -86,11 +87,18 @@ def _text(value: object) -> str:
 
 
 def _money(value: object, *, field: str, row_number: int, optional: bool) -> Decimal:
-    text = _text(value).replace(",", "")
+    text = _text(value).replace("\u00a0", " ").replace(",", "")
     if not text and optional:
         return Decimal("0")
+    # ERP and spreadsheet exports commonly retain a display currency prefix.
+    # Accept that presentation without weakening the AED-only input contract.
+    match = re.fullmatch(r"(?:AED\s*)?(-?\d+(?:\.\d+)?)", text, flags=re.IGNORECASE)
+    if not match:
+        raise PortfolioValidationError(
+            f"Row {row_number}: {field} must be a valid AED amount."
+        )
     try:
-        amount = Decimal(text).quantize(Decimal("0.01"))
+        amount = Decimal(match.group(1)).quantize(Decimal("0.01"))
     except InvalidOperation as exc:
         raise PortfolioValidationError(
             f"Row {row_number}: {field} must be a valid AED amount."

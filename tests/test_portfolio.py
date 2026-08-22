@@ -100,6 +100,64 @@ def test_parser_maps_columns_and_rejects_conflicting_supplier_values():
         screen_portfolio(parsed, as_of=AS_OF)
 
 
+@pytest.mark.parametrize(
+    ("display_value", "expected"),
+    [
+        ("8640.14", Decimal("8640.14")),
+        ("8,640.14", Decimal("8640.14")),
+        ("AED 8,640.14", Decimal("8640.14")),
+        ("aed\u00a08,640.14", Decimal("8640.14")),
+    ],
+)
+def test_parser_accepts_common_aed_amount_formats(display_value, expected):
+    mapping = {
+        "supplier_reference": "Supplier",
+        "supply_reference": "Invoice",
+        "supply_date": "Date",
+        "amount_excluding_vat": "Net",
+        "input_vat": "VAT",
+        "expected_next_12m": "Forecast",
+    }
+    [parsed] = parse_ledger_rows(
+        [
+            {
+                "Supplier": "S1",
+                "Invoice": "I1",
+                "Date": "2026-01-01",
+                "Net": display_value,
+                "VAT": "AED 432.01",
+                "Forecast": "AED 22,631.14",
+            }
+        ],
+        mapping,
+    )
+
+    assert parsed.amount_excluding_vat == expected
+    assert parsed.input_vat == Decimal("432.01")
+    assert parsed.expected_next_12m == Decimal("22631.14")
+
+
+def test_parser_rejects_non_aed_currency_prefix():
+    mapping = {
+        "supplier_reference": "Supplier",
+        "supply_reference": "Invoice",
+        "supply_date": "Date",
+        "amount_excluding_vat": "Net",
+    }
+    with pytest.raises(PortfolioValidationError, match="valid AED amount"):
+        parse_ledger_rows(
+            [
+                {
+                    "Supplier": "S1",
+                    "Invoice": "I1",
+                    "Date": "2026-01-01",
+                    "Net": "USD 8,640.14",
+                }
+            ],
+            mapping,
+        )
+
+
 def test_launch_dataset_demonstrates_retrospective_and_reverification_scenarios():
     dataset = Path(__file__).parents[1] / "examples" / "fta13_synthetic_portfolio_800.csv"
     with dataset.open(encoding="utf-8-sig", newline="") as handle:
