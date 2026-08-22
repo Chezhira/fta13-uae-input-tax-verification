@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Chez Solutions. Authored by Zahidah Murira.
+# MIT License: https://github.com/Chezhira/fta13-uae-input-tax-verification
+
 """Deterministic threshold arithmetic. No AI, no heuristics, no I/O.
 
 This module is the part an FTA officer or an auditor would recompute by hand.

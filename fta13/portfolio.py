@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Chez Solutions. Authored by Zahidah Murira.
+# MIT License: https://github.com/Chezhira/fta13-uae-input-tax-verification
+
 """Deterministic portfolio screening for accounts-payable ledger exports."""
 
 from __future__ import annotations
