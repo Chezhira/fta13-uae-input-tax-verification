@@ -8,6 +8,7 @@
 [![CI](https://img.shields.io/badge/CI-57%20tests%20passing-2EA043)](.github/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-90%25%2B-2EA043)](.github/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-F2CC60)](LICENSE)
+[![DOI](https://zenodo.org/badge/1340970919.svg)](https://doi.org/10.5281/zenodo.22056623)
 
 [**Open the live tool**](https://fta13-uae-input-tax-verification.streamlit.app/) · [How it works](#how-it-works) · [Run locally](#run-locally) · [Legal source](#legal-source-and-scope)
 
