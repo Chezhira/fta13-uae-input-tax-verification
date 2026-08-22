@@ -29,14 +29,29 @@ class LedgerTransaction:
     supply_reference: str
     supply_date: date
     amount_excluding_vat: Decimal
+    supplier_name: str = ""
+    supplier_trn: str = ""
     input_vat: Decimal = Decimal("0")
     expected_next_12m: Decimal = Decimal("0")
     last_verified_on: date | None = None
+
+    def as_row(self) -> dict[str, object]:
+        row = asdict(self)
+        for key, value in row.items():
+            if isinstance(value, Decimal):
+                row[key] = f"{value:.2f}"
+            elif isinstance(value, date):
+                row[key] = value.isoformat()
+            elif value is None:
+                row[key] = ""
+        return row
 
 
 @dataclass(frozen=True)
 class PortfolioResult:
     supplier_reference: str
+    supplier_name: str
+    supplier_trn: str
     transaction_count: int
     trailing_12m_aed: Decimal
     expected_next_12m_aed: Decimal
@@ -138,6 +153,8 @@ def parse_ledger_rows(
         parsed.append(
             LedgerTransaction(
                 supplier_reference=supplier,
+                supplier_name=_text(value("supplier_name")),
+                supplier_trn=_text(value("supplier_trn")),
                 supply_reference=supply,
                 supply_date=_date(
                     value("supply_date"),
@@ -202,6 +219,8 @@ def screen_portfolio(
     for supplier_ref, items in grouped.items():
         expected = _one_supplier_value(items, "expected_next_12m", Decimal("0"))
         verified = _one_supplier_value(items, "last_verified_on", None)
+        supplier_name = _one_supplier_value(items, "supplier_name", "")
+        supplier_trn = _one_supplier_value(items, "supplier_trn", "")
         supplies = [
             Supply(
                 supply_id=item.supply_reference,
@@ -263,6 +282,8 @@ def screen_portfolio(
         results.append(
             PortfolioResult(
                 supplier_reference=supplier_ref,
+                supplier_name=supplier_name,
+                supplier_trn=supplier_trn,
                 transaction_count=len(in_window),
                 trailing_12m_aed=position.trailing_12m,
                 expected_next_12m_aed=expected,

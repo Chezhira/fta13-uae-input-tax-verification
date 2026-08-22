@@ -73,6 +73,14 @@ def test_uploaded_evidence_requires_human_checkbox_and_carries_hash():
     assert "sha256=item[\"sha256\"]" in source
 
 
+def test_portfolio_linkage_is_human_confirmed_and_gates_exports():
+    assert 'key="document_linkage_confirmed"' in APP_SOURCE
+    assert "link_document_to_supplier" in APP_SOURCE
+    assert "linkage_exports_locked" in APP_SOURCE
+    assert "not linkage_confirmed or not reviewer.strip()" in APP_SOURCE
+    assert '"document_linkage": linkage_record' in APP_SOURCE
+
+
 def test_extraction_targets_use_session_defaults_without_widget_values():
     extraction_targets = {
         "assessment_date_input",
