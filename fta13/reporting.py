@@ -22,6 +22,9 @@ def build_pdf_report(
     supplier_outcome: Any,
     supply_outcome: Any,
     extracted_document: dict[str, Any] | None = None,
+    ruleset_label: str = "not stated",
+    generated_on_utc: str = "not stated",
+    reviewer: str = "",
 ) -> bytes:
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_RIGHT
@@ -68,6 +71,13 @@ def build_pdf_report(
         Paragraph("FTA Decision 13 Verification Record", heading),
         Spacer(1, 5 * mm),
         Paragraph(f"Assessment date: {supply_outcome.as_of.isoformat()}", body),
+        Paragraph(f"Ruleset version: {escape(ruleset_label)}", body),
+        Paragraph(f"Generated on (UTC): {escape(generated_on_utc)}", body),
+        Paragraph(
+            "Reviewer (self-declared, not verified by this tool): "
+            f"{escape(reviewer or 'not stated')}",
+            body,
+        ),
         Paragraph(f"Supplier reference: {supplier_outcome.supplier_id}", body),
         Paragraph(f"Supply reference: {supply_outcome.supply_id}", body),
         Spacer(1, 5 * mm),
