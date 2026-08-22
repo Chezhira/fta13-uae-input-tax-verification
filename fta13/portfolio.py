@@ -9,6 +9,7 @@ from typing import Iterable, Mapping
 
 from .models import Supply
 from .thresholds import (
+    DE_MINIMIS_PER_SUPPLY,
     DE_MINIMIS_WITHDRAWAL,
     assess,
     crossing_date,
@@ -254,7 +255,7 @@ def screen_portfolio(
             (
                 item.input_vat
                 for item in in_window
-                if item.amount_excluding_vat >= Decimal("10000")
+                if item.amount_excluding_vat >= DE_MINIMIS_PER_SUPPLY
             ),
             Decimal("0"),
         )

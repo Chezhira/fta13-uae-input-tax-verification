@@ -1,5 +1,7 @@
+import csv
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -96,3 +98,24 @@ def test_parser_maps_columns_and_rejects_conflicting_supplier_values():
     )
     with pytest.raises(PortfolioValidationError, match="conflicting expected_next_12m"):
         screen_portfolio(parsed, as_of=AS_OF)
+
+
+def test_launch_dataset_demonstrates_retrospective_and_reverification_scenarios():
+    dataset = Path(__file__).parents[1] / "examples" / "fta13_synthetic_portfolio_800.csv"
+    with dataset.open(encoding="utf-8-sig", newline="") as handle:
+        raw_rows = list(csv.DictReader(handle))
+    mapping = {field: field for field in raw_rows[0]}
+    results = screen_portfolio(parse_ledger_rows(raw_rows, mapping), as_of=AS_OF)
+
+    retrospective = [item for item in results if item.retrospective_supply_count]
+    due_soon = [item for item in results if item.due_within_90_days]
+    overdue = [
+        item
+        for item in results
+        if item.supplier_verification_due and item.last_verified_on is not None
+    ]
+
+    assert len(results) == 800
+    assert len(retrospective) >= 12
+    assert len(due_soon) >= 12
+    assert len(overdue) >= 12

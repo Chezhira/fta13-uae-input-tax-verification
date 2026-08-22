@@ -40,8 +40,10 @@ Assessment, document reading, and report downloads do not require an account. Si
 
 Portfolio screening is session-only and does not save the uploaded ledger. The
 CSV mapper requires the internal supplier reference, supply reference, supply
-date, and amount excluding VAT. Supplier legal name and TRN are recommended
-because they connect supplier documents to the selected internal ledger record.
+date, and amount excluding VAT. **Supplier names and TRNs are optional:** a team
+can screen its full portfolio using internal codes and financial data only.
+Supplier legal name and TRN are recommended only when the team wants to connect
+supplier documents to the selected internal ledger record.
 Input VAT, expected next-12-month spend, and last verification date are optional.
 Dates use `YYYY-MM-DD` and amounts use AED.
 
@@ -50,6 +52,15 @@ expected to appear on supplier documents. After a ranked supplier is selected,
 the app compares the extracted legal name and TRN at supplier level, then the
 invoice reference, date and amount at transaction level. The proposed linkage
 must be confirmed by a named reviewer before PDF, CSV or JSON exports are enabled.
+
+### Synthetic launch demonstration
+
+Screened as at 1 October 2026, the included 800-supplier dataset produces 151
+enhanced-check priorities, 258 full-verification priorities and AED 7.80 million
+of input VAT screening exposure. It also deliberately includes 12 suppliers
+with sub-AED 10,000 invoices before crossing AED 100,000, 12 suppliers due for
+re-verification within 90 days and a separate overdue population. These are
+synthetic screening results, not input-tax recoverability conclusions.
 
 Each assessment accepts up to five supporting documents of no more than 5 MB
 each, and they must relate to one supplier and one supply/invoice. The app
