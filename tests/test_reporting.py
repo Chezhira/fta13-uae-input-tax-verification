@@ -79,6 +79,55 @@ def test_pdf_report_is_valid_and_handles_arabic():
     assert "A. Reviewer on 2026-10-01: checked source page 1." in normalized_text
 
 
+def test_pdf_includes_human_confirmed_ledger_document_linkage():
+    result = SimpleNamespace(
+        clause_id="4.1.a",
+        article="4(1)(a)",
+        verdict=SimpleNamespace(value="satisfied"),
+        requirement="Transaction reviewed.",
+        detail="complete",
+    )
+    supplier = SimpleNamespace(
+        as_of=date(2026, 10, 1),
+        supplier_id="V000145",
+        supply_id=None,
+        results=[result],
+    )
+    supply = SimpleNamespace(
+        as_of=date(2026, 10, 1),
+        supplier_id="V000145",
+        supply_id="INV-1001",
+        results=[result],
+    )
+    pdf = build_pdf_report(
+        supplier_outcome=supplier,
+        supply_outcome=supply,
+        document_linkage={
+            "supplier_reference": "V000145",
+            "supplier_name": "ABC Trading LLC",
+            "supplier_trn": "100123456700003",
+            "matched_supply_reference": "INV-1001",
+            "match_basis": "Invoice reference",
+            "confirmed_by": "A. Reviewer",
+            "confirmed_on": "2026-10-01",
+            "documents": [
+                {"filename": "invoice.pdf", "sha256": "a" * 64}
+            ],
+        },
+    )
+    text = " ".join(
+        "\n".join(
+            page.extract_text() or ""
+            for page in PdfReader(__import__("io").BytesIO(pdf)).pages
+        ).split()
+    )
+    assert "Ledger-to-document linkage" in text
+    assert "V000145" in text
+    assert "INV-1001" in text
+    assert "invoice.pdf" in text
+    assert "A. Reviewer on 2026-10-01" in text
+
+
 def test_pdf_article_6_exception_omits_supplier_gaps():
     supplier_gap = SimpleNamespace(
         clause_id="3.1.b.1",

@@ -35,6 +35,24 @@ def test_portfolio_ranks_enhanced_and_calculates_screening_exposure():
     assert result.supplies_requiring_verification == 2
 
 
+def test_transaction_and_result_rows_are_export_ready():
+    item = tx(
+        "A",
+        "12000.50",
+        "600.03",
+        supplier_reference="V1",
+        expected_next_12m=Decimal("50000"),
+        last_verified_on=date(2026, 1, 1),
+    )
+    transaction_row = item.as_row()
+    result_row = screen_portfolio([item], as_of=AS_OF)[0].as_row()
+
+    assert transaction_row["amount_excluding_vat"] == "12000.50"
+    assert transaction_row["last_verified_on"] == "2026-01-01"
+    assert result_row["trailing_12m_aed"] == "12000.50"
+    assert result_row["next_reverification_due"] == "2027-01-01"
+
+
 def test_strict_100k_boundary_and_expected_spend_trigger():
     at_boundary = screen_portfolio([tx("A", "100000", "5000")], as_of=AS_OF)[0]
     forward_trigger = screen_portfolio(

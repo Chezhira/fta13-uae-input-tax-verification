@@ -73,6 +73,7 @@ def build_pdf_report(
     reviewer: str = "",
     exception_available: bool | None = None,
     evidence_strength: dict[str, int] | None = None,
+    document_linkage: dict[str, Any] | None = None,
 ) -> bytes:
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_RIGHT
@@ -177,6 +178,76 @@ def build_pdf_report(
                 Spacer(1, 5 * mm),
             ]
         )
+
+    if document_linkage is not None:
+        linked_documents = document_linkage.get("documents", [])
+        document_rows = [
+            [
+                Paragraph("Filename", cell_header),
+                Paragraph("SHA-256", cell_header),
+            ]
+        ]
+        for item in linked_documents:
+            document_rows.append(
+                [
+                    Paragraph(_pdf_text(item.get("filename", "")), cell),
+                    Paragraph(_pdf_text(item.get("sha256", "")), cell),
+                ]
+            )
+        story.extend(
+            [
+                Paragraph("Ledger-to-document linkage", heading),
+                Paragraph(
+                    "Internal supplier reference: "
+                    f"{_pdf_text(document_linkage.get('supplier_reference', ''))}",
+                    body,
+                ),
+                Paragraph(
+                    "Supplier name from ledger: "
+                    f"{_pdf_text(document_linkage.get('supplier_name') or 'not provided')}",
+                    body,
+                ),
+                Paragraph(
+                    "Supplier TRN from ledger: "
+                    f"{_pdf_text(document_linkage.get('supplier_trn') or 'not provided')}",
+                    body,
+                ),
+                Paragraph(
+                    "Matched supply reference: "
+                    f"{_pdf_text(document_linkage.get('matched_supply_reference', ''))}",
+                    body,
+                ),
+                Paragraph(
+                    f"Match basis: {_pdf_text(document_linkage.get('match_basis', ''))}",
+                    body,
+                ),
+                Paragraph(
+                    "Human confirmation: "
+                    f"{_pdf_text(document_linkage.get('confirmed_by') or 'not stated')} "
+                    f"on {_pdf_text(document_linkage.get('confirmed_on') or 'not stated')}",
+                    body,
+                ),
+            ]
+        )
+        if len(document_rows) > 1:
+            linkage_table = Table(
+                document_rows,
+                colWidths=[58 * mm, 120 * mm],
+                repeatRows=1,
+            )
+            linkage_table.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#17365D")),
+                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                        ("FONTNAME", (0, 0), (-1, -1), font_name),
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                    ]
+                )
+            )
+            story.append(linkage_table)
+        story.append(Spacer(1, 5 * mm))
 
     if exception_available is None:
         assessment = getattr(supply_outcome, "assessment", None)

@@ -7,7 +7,7 @@ from .models import (
 from .engine import evaluate_supplier, evaluate_supply, VerificationOutcome
 from . import thresholds
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 __all__ = [
     "CheckKind", "Evidence", "HumanConclusion", "PaymentMethod", "PersonType",
     "RiskEvent", "Supplier", "Supply", "Verdict",
