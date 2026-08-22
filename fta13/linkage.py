@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Chez Solutions. Authored by Zahidah Murira.
+# MIT License: https://github.com/Chezhira/fta13-uae-input-tax-verification
+
 """Deterministic linkage between AP-ledger rows and extracted documents."""
 
 from __future__ import annotations
